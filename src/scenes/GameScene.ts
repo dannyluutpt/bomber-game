@@ -55,6 +55,7 @@ export class GameScene extends Phaser.Scene {
   private selectedCharacters: [CharacterId, CharacterId] = ["nova", "orion"];
   private selectedMode: GameMode = "single";
   private lastSeed = 0;
+  private hudOffset = 88;
   private boundDomKeydown = (e: KeyboardEvent) => this.handleDomKeydown(e);
 
   private hud = {
@@ -87,16 +88,22 @@ export class GameScene extends Phaser.Scene {
 
   constructor() { super("GameScene"); }
 
+  private refreshLayout(): void {
+    const hud = document.getElementById("hud");
+    if (hud) this.hudOffset = Math.ceil(hud.getBoundingClientRect().bottom) + 6;
+    this.lastBrickCount = -1;
+  }
+
   private get TILE(): number {
     const w = this.scale.width;
     const h = this.scale.height;
     return Math.min(
       Math.floor(w / LEVEL_WIDTH),
-      Math.floor((h - 80) / LEVEL_HEIGHT)
+      Math.floor((h - this.hudOffset) / LEVEL_HEIGHT)
     );
   }
   private get BOARD_X(): number { return Math.floor((this.scale.width - LEVEL_WIDTH * this.TILE) / 2); }
-  private get BOARD_Y(): number { return 80; }
+  private get BOARD_Y(): number { return this.hudOffset; }
 
   preload(): void {
     this.load.spritesheet("rpgCharacters", `${import.meta.env.BASE_URL}assets/rpg_16x16.png`, {
@@ -105,6 +112,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.refreshLayout();
     this.cameras.main.setBackgroundColor("#050914");
     this.createBackground();
     this.createBoardBacking();
@@ -140,10 +148,10 @@ export class GameScene extends Phaser.Scene {
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,SPACE,ENTER,P,ESC") as Record<string, Phaser.Input.Keyboard.Key>;
 
     this.scale.on("resize", () => {
+      this.refreshLayout();
       this.cameras.main.setBackgroundColor("#050914");
       this.createBackground();
       this.createBoardBacking();
-      this.lastBrickCount = -1; // force tile redraw after resize
     });
 
     this.bindMenu();
