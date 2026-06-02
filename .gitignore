@@ -1,3 +1,15 @@
 node_modules/
 dist/
 .claude/
+*.png
+*.zip
+*.log
+*.err.log
+retro-bomb-runner/
+debug-*.png
+playtest-*.png
+fixed-*.png
+game-*.png
+menu-*.png
+character-*.png
+vite-dev*
