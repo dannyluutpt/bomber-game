@@ -56,6 +56,7 @@ export class GameScene extends Phaser.Scene {
   private selectedMode: GameMode = "single";
   private lastSeed = 0;
   private hudOffset = 88;
+  private touchBottom = 0;
   private boundDomKeydown = (e: KeyboardEvent) => this.handleDomKeydown(e);
 
   private hud = {
@@ -91,6 +92,15 @@ export class GameScene extends Phaser.Scene {
   private refreshLayout(): void {
     const hud = document.getElementById("hud");
     if (hud) this.hudOffset = Math.ceil(hud.getBoundingClientRect().bottom) + 6;
+
+    const tc = document.getElementById("touch-controls");
+    if (tc && getComputedStyle(tc).display !== "none") {
+      const tcRect = tc.getBoundingClientRect();
+      this.touchBottom = Math.ceil(this.scale.height - tcRect.top) + 4;
+    } else {
+      this.touchBottom = 0;
+    }
+
     this.lastBrickCount = -1;
   }
 
@@ -99,7 +109,7 @@ export class GameScene extends Phaser.Scene {
     const h = this.scale.height;
     return Math.min(
       Math.floor(w / LEVEL_WIDTH),
-      Math.floor((h - this.hudOffset) / LEVEL_HEIGHT)
+      Math.floor((h - this.hudOffset - this.touchBottom) / LEVEL_HEIGHT)
     );
   }
   private get BOARD_X(): number { return Math.floor((this.scale.width - LEVEL_WIDTH * this.TILE) / 2); }
