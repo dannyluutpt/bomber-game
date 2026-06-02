@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Đặt Bom Pixel</title>
+    <script type="module" crossorigin src="/assets/index-C0uCGBbU.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DyaP4inX.css">
+  </head>
+  <body>
+    <div id="app">
+      <div id="game-root"></div>
+
+      <div id="hud" aria-live="polite">
+        <div class="hud-brand">
+          <span class="status-dot"></span>
+          <strong>ĐẶT BOM PIXEL</strong>
+          <span id="difficulty-label">THƯỜNG</span>
+        </div>
+        <div class="hud-strip">
+          <div class="hud-item">
+            <span class="label">Điểm P1</span>
+            <strong id="score">0000</strong>
+          </div>
+          <div class="hud-item">
+            <span class="label">Thời gian</span>
+            <strong id="time">180</strong>
+          </div>
+          <div class="hud-item">
+            <span class="label">Bom</span>
+            <strong id="bombs">2/2</strong>
+          </div>
+          <div class="hud-item">
+            <span class="label">Lửa</span>
+            <strong id="range">2</strong>
+          </div>
+          <div class="hud-item">
+            <span class="label">Máu</span>
+            <strong id="lives">3</strong>
+          </div>
+          <div class="hud-item">
+            <span class="label">Địch</span>
+            <strong id="enemies">0</strong>
+          </div>
+        </div>
+        <div class="hud-strip" id="hud-p2" style="display:none">
+          <div class="hud-item hud-p2-label">
+            <span class="label">P2</span>
+          </div>
+          <div class="hud-item">
+            <span class="label">Điểm P2</span>
+            <strong id="score2">0000</strong>
+          </div>
+          <div class="hud-item">
+            <span class="label">Bom</span>
+            <strong id="bombs2">2/2</strong>
+          </div>
+          <div class="hud-item">
+            <span class="label">Lửa</span>
+            <strong id="range2">2</strong>
+          </div>
+          <div class="hud-item">
+            <span class="label">Máu</span>
+            <strong id="lives2">3</strong>
+          </div>
+        </div>
+        <button id="pause-button" class="icon-button" type="button" title="Tạm dừng" aria-label="Tạm dừng">II</button>
+      </div>
+
+      <div id="touch-controls" aria-label="Điều khiển cảm ứng">
+        <div class="dpad">
+          <button class="touch-button up" type="button" data-action="up" aria-label="Lên">LÊN</button>
+          <button class="touch-button left" type="button" data-action="left" aria-label="Trái">TRÁI</button>
+          <button class="touch-button right" type="button" data-action="right" aria-label="Phải">PHẢI</button>
+          <button class="touch-button down" type="button" data-action="down" aria-label="Xuống">XUỐNG</button>
+        </div>
+        <button id="bomb-button" class="touch-button bomb" type="button" data-action="bomb" aria-label="Đặt bom">BOM</button>
+      </div>
+
+      <div id="overlay" class="overlay visible">
+
+        <!-- MAIN MENU -->
+        <section class="menu-shell" data-screen="main">
+          <main class="menu-main">
+            <p class="eyebrow">BOMBER CONTROL</p>
+            <h1>ĐẶT BOM PIXEL</h1>
+            <p class="menu-copy">Phá gạch, né quái, nhặt buff và thoát khỏi mê cung.</p>
+            <div class="actions vertical">
+              <button id="play-now-button" type="button">Chơi ngay</button>
+              <button id="guide-button" type="button" class="secondary">Hướng dẫn</button>
+            </div>
+          </main>
+        </section>
+
+        <!-- GUIDE -->
+        <section class="menu-shell hidden" data-screen="guide">
+          <main class="menu-main">
+            <p class="eyebrow">HƯỚNG DẪN</p>
+            <h1>Luật chơi</h1>
+            <div class="guide-grid">
+              <div><strong>1 người:</strong> WASD di chuyển, Space đặt bom. Diệt quái, mở cổng thoát, bước vào để thắng.</div>
+              <div><strong>2 người:</strong> P1 dùng WASD+Space, P2 dùng mũi tên+Enter. Người sống sót cuối cùng thắng.</div>
+              <div><strong>Gem buff (tam giác):</strong> Rơi từ gạch vỡ. Hồng=máu, Tím=xuyên tường, Cam=mega blast, Vàng=tốc độ, Xanh lá=khiên.</div>
+              <div><strong>Dây chuyền:</strong> Bom kích nổ bom khác — trừ bom của Viper.</div>
+            </div>
+            <div class="actions">
+              <button class="back-main-button" type="button">Quay lại</button>
+            </div>
+          </main>
+        </section>
+
+        <!-- MODE SELECT -->
+        <section class="menu-shell hidden" data-screen="mode">
+          <main class="menu-main">
+            <p class="eyebrow">THIẾT LẬP TRẬN</p>
+            <h1>Chọn chế độ</h1>
+            <div class="choice-grid mode-grid">
+              <button class="choice-card active" type="button" data-mode="single">
+                <strong>1 Người</strong>
+                <span>Chơi một mình, diệt quái và thoát qua cổng.</span>
+              </button>
+              <button class="choice-card" type="button" data-mode="versus">
+                <strong>2 Người</strong>
+                <span>Đấu với nhau và quái. Người sống cuối cùng thắng.</span>
+              </button>
+            </div>
+            <div class="actions">
+              <button class="back-main-button secondary" type="button">Quay lại</button>
+            </div>
+          </main>
+        </section>
+
+        <!-- DIFFICULTY -->
+        <section class="menu-shell hidden" data-screen="difficulty">
+          <main class="menu-main">
+            <p class="eyebrow">THIẾT LẬP TRẬN</p>
+            <h1>Chọn độ khó</h1>
+            <div class="choice-grid difficulty-grid">
+              <button class="choice-card" type="button" data-difficulty="easy">
+                <strong>Dễ</strong>
+                <span>4 mạng, ít quái, nhiều thời gian.</span>
+              </button>
+              <button class="choice-card active" type="button" data-difficulty="normal">
+                <strong>Thường</strong>
+                <span>Cân bằng tốc độ, thời gian và số quái.</span>
+              </button>
+              <button class="choice-card" type="button" data-difficulty="hard">
+                <strong>Khó</strong>
+                <span>2 mạng, quái nhanh, nhiều gạch.</span>
+              </button>
+            </div>
+            <div class="actions">
+              <button class="back-mode-button secondary" type="button">Quay lại</button>
+            </div>
+          </main>
+        </section>
+
+        <!-- CHARACTER SELECT P1 -->
+        <section class="menu-shell hidden" data-screen="character">
+          <main class="menu-main">
+            <p class="eyebrow">NGƯỜI CHƠI 1</p>
+            <h1>Chọn nhân vật</h1>
+            <div class="choice-grid character-grid">
+              <button class="choice-card character-card active" type="button" data-character-p1="nova">
+                <span class="sprite-avatar sprite-nova"></span>
+                <strong>Nova</strong>
+                <span>Tốc độ gấp đôi.</span>
+              </button>
+              <button class="choice-card character-card" type="button" data-character-p1="orion">
+                <span class="sprite-avatar sprite-orion"></span>
+                <strong>Orion</strong>
+                <span>Tầm nổ ban đầu +1.</span>
+              </button>
+              <button class="choice-card character-card" type="button" data-character-p1="titan">
+                <span class="sprite-avatar sprite-titan"></span>
+                <strong>Titan</strong>
+                <span>5 mạng, di chuyển chậm hơn.</span>
+              </button>
+              <button class="choice-card character-card" type="button" data-character-p1="ghost">
+                <span class="sprite-avatar sprite-ghost"></span>
+                <strong>Ghost</strong>
+                <span>Bất tử 4 giây sau khi bị đánh.</span>
+              </button>
+              <button class="choice-card character-card" type="button" data-character-p1="echo">
+                <span class="sprite-avatar sprite-echo"></span>
+                <strong>Echo</strong>
+                <span>Bắt đầu với 3 bom tối đa.</span>
+              </button>
+              <button class="choice-card character-card" type="button" data-character-p1="viper">
+                <span class="sprite-avatar sprite-viper"></span>
+                <strong>Viper</strong>
+                <span>Bom miễn nhiễm nổ dây chuyền.</span>
+              </button>
+            </div>
+            <div class="actions">
+              <button id="back-difficulty-button" class="secondary" type="button">Quay lại</button>
+            </div>
+          </main>
+        </section>
+
+        <!-- CHARACTER SELECT P2 (versus only) -->
+        <section class="menu-shell hidden" data-screen="character-p2">
+          <main class="menu-main">
+            <p class="eyebrow">NGƯỜI CHƠI 2</p>
+            <h1>Chọn nhân vật</h1>
+            <div class="choice-grid character-grid">
+              <button class="choice-card character-card" type="button" data-character-p2="nova">
+                <span class="sprite-avatar sprite-nova"></span>
+                <strong>Nova</strong>
+                <span>Tốc độ gấp đôi.</span>
+              </button>
+              <button class="choice-card character-card active" type="button" data-character-p2="orion">
+                <span class="sprite-avatar sprite-orion"></span>
+                <strong>Orion</strong>
+                <span>Tầm nổ ban đầu +1.</span>
+              </button>
+              <button class="choice-card character-card" type="button" data-character-p2="titan">
+                <span class="sprite-avatar sprite-titan"></span>
+                <strong>Titan</strong>
+                <span>5 mạng, di chuyển chậm hơn.</span>
+              </button>
+              <button class="choice-card character-card" type="button" data-character-p2="ghost">
+                <span class="sprite-avatar sprite-ghost"></span>
+                <strong>Ghost</strong>
+                <span>Bất tử 4 giây sau khi bị đánh.</span>
+              </button>
+              <button class="choice-card character-card" type="button" data-character-p2="echo">
+                <span class="sprite-avatar sprite-echo"></span>
+                <strong>Echo</strong>
+                <span>Bắt đầu với 3 bom tối đa.</span>
+              </button>
+              <button class="choice-card character-card" type="button" data-character-p2="viper">
+                <span class="sprite-avatar sprite-viper"></span>
+                <strong>Viper</strong>
+                <span>Bom miễn nhiễm nổ dây chuyền.</span>
+              </button>
+            </div>
+            <div class="actions">
+              <button id="back-character-button" class="secondary" type="button">Quay lại</button>
+            </div>
+          </main>
+        </section>
+
+        <!-- STATUS -->
+        <section class="menu-shell compact hidden" data-screen="status">
+          <main class="menu-main">
+            <p class="eyebrow" id="status-eyebrow">TRẠNG THÁI</p>
+            <h1 id="status-title">Tạm dừng</h1>
+            <p class="menu-copy" id="status-copy">Bấm tiếp tục để quay lại.</p>
+            <div class="actions">
+              <button id="resume-button" type="button">Tiếp tục</button>
+              <button id="restart-button" type="button" class="secondary">Chơi lại</button>
+              <button id="main-menu-button" type="button" class="secondary">Menu chính</button>
+            </div>
+          </main>
+        </section>
+
+      </div>
+    </div>
+  </body>
+</html>
