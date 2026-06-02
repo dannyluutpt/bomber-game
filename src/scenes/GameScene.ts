@@ -453,8 +453,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createBackground(): void {
-    this.bgGraphics?.destroy();
-    this.bgGraphics = this.add.graphics();
+    if (!this.bgGraphics) this.bgGraphics = this.add.graphics();
+    else this.bgGraphics.clear();
     this.bgGraphics.fillStyle(0x050914, 1);
     this.bgGraphics.fillRect(0, 0, this.scale.width, this.scale.height);
     this.bgGraphics.lineStyle(1, 0x0e2534, 0.55);
@@ -468,8 +468,8 @@ export class GameScene extends Phaser.Scene {
     const by = this.BOARD_Y;
     const bw = LEVEL_WIDTH * t;
     const bh = LEVEL_HEIGHT * t;
-    this.backingGraphics?.destroy();
-    this.backingGraphics = this.add.graphics();
+    if (!this.backingGraphics) this.backingGraphics = this.add.graphics();
+    else this.backingGraphics.clear();
     this.backingGraphics.fillStyle(0x07111c, 0.98);
     this.backingGraphics.fillRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 4);
     this.backingGraphics.lineStyle(1, 0x2be4ff, 0.28);
@@ -482,8 +482,8 @@ export class GameScene extends Phaser.Scene {
     const by = this.BOARD_Y;
     const bw = LEVEL_WIDTH * t;
     const bh = LEVEL_HEIGHT * t;
-    this.chromeGraphics?.destroy();
-    this.chromeGraphics = this.add.graphics();
+    if (!this.chromeGraphics) this.chromeGraphics = this.add.graphics();
+    else this.chromeGraphics.clear();
     this.chromeGraphics.lineStyle(3, 0x35d9ff, 0.9);
     this.chromeGraphics.strokeRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 4);
     this.chromeGraphics.lineStyle(1, 0xff4d9d, 0.45);
