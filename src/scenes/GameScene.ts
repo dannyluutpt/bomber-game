@@ -57,6 +57,10 @@ export class GameScene extends Phaser.Scene {
   private lastSeed = 0;
   private hudOffset = 88;
   private touchBottom = 0;
+  private lastLayoutCheck = 0;
+  private bgGraphics?: Phaser.GameObjects.Graphics;
+  private backingGraphics?: Phaser.GameObjects.Graphics;
+  private chromeGraphics?: Phaser.GameObjects.Graphics;
   private boundDomKeydown = (e: KeyboardEvent) => this.handleDomKeydown(e);
 
   private hud = {
@@ -89,19 +93,31 @@ export class GameScene extends Phaser.Scene {
 
   constructor() { super("GameScene"); }
 
-  private refreshLayout(): void {
+  // Returns true if layout measurements changed (caller should redraw static layers).
+  private refreshLayout(): boolean {
     const hud = document.getElementById("hud");
-    if (hud) this.hudOffset = Math.ceil(hud.getBoundingClientRect().bottom) + 6;
+    const newHud = hud ? Math.ceil(hud.getBoundingClientRect().bottom) + 6 : this.hudOffset;
 
+    // In landscape the controls are semi-transparent overlays — don't subtract them.
+    const isLandscape = this.scale.width > this.scale.height;
     const tc = document.getElementById("touch-controls");
-    if (tc && getComputedStyle(tc).display !== "none") {
-      const tcRect = tc.getBoundingClientRect();
-      this.touchBottom = Math.ceil(this.scale.height - tcRect.top) + 4;
-    } else {
-      this.touchBottom = 0;
+    let newTouch = 0;
+    if (!isLandscape && tc && getComputedStyle(tc).display !== "none") {
+      newTouch = Math.ceil(this.scale.height - tc.getBoundingClientRect().top) + 4;
     }
 
-    this.lastBrickCount = -1;
+    const changed = newHud !== this.hudOffset || newTouch !== this.touchBottom;
+    this.hudOffset = newHud;
+    this.touchBottom = newTouch;
+    if (changed) this.lastBrickCount = -1;
+    return changed;
+  }
+
+  private redrawStaticLayers(): void {
+    this.cameras.main.setBackgroundColor("#050914");
+    this.createBackground();
+    this.createBoardBacking();
+    this.createChrome();
   }
 
   private get TILE(): number {
@@ -127,6 +143,7 @@ export class GameScene extends Phaser.Scene {
     this.createBackground();
     this.createBoardBacking();
     this.board = this.add.container(this.BOARD_X, this.BOARD_Y);
+    this.lastBrickCount = -1;
     this.createChrome();
 
     // --- persistent render pool: created once, reused every frame ---
@@ -158,10 +175,12 @@ export class GameScene extends Phaser.Scene {
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,SPACE,ENTER,P,ESC") as Record<string, Phaser.Input.Keyboard.Key>;
 
     this.scale.on("resize", () => {
-      this.refreshLayout();
-      this.cameras.main.setBackgroundColor("#050914");
-      this.createBackground();
-      this.createBoardBacking();
+      // Defer one animation frame so CSS has time to apply the new
+      // orientation's media queries before we measure the HUD height.
+      requestAnimationFrame(() => {
+        this.refreshLayout();
+        this.redrawStaticLayers();
+      });
     });
 
     this.bindMenu();
@@ -174,6 +193,12 @@ export class GameScene extends Phaser.Scene {
 
   update(time: number, delta: number): void {
     this.frameDelta = delta;
+    // Poll layout every 800 ms to catch orientation changes that the resize
+    // event may have missed or measured too early.
+    if (time - this.lastLayoutCheck > 800) {
+      this.lastLayoutCheck = time;
+      if (this.refreshLayout()) this.redrawStaticLayers();
+    }
     this.handleInput(time);
     this.model.update(time, delta);
     const snapshot = this.model.snapshot();
@@ -428,12 +453,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createBackground(): void {
-    const g = this.add.graphics();
-    g.fillStyle(0x050914, 1);
-    g.fillRect(0, 0, this.scale.width, this.scale.height);
-    g.lineStyle(1, 0x0e2534, 0.55);
-    for (let x = 0; x <= this.scale.width; x += 16) g.lineBetween(x, 0, x, this.scale.height);
-    for (let y = 0; y <= this.scale.height; y += 16) g.lineBetween(0, y, this.scale.width, y);
+    this.bgGraphics?.destroy();
+    this.bgGraphics = this.add.graphics();
+    this.bgGraphics.fillStyle(0x050914, 1);
+    this.bgGraphics.fillRect(0, 0, this.scale.width, this.scale.height);
+    this.bgGraphics.lineStyle(1, 0x0e2534, 0.55);
+    for (let x = 0; x <= this.scale.width; x += 16) this.bgGraphics.lineBetween(x, 0, x, this.scale.height);
+    for (let y = 0; y <= this.scale.height; y += 16) this.bgGraphics.lineBetween(0, y, this.scale.width, y);
   }
 
   private createBoardBacking(): void {
@@ -442,11 +468,12 @@ export class GameScene extends Phaser.Scene {
     const by = this.BOARD_Y;
     const bw = LEVEL_WIDTH * t;
     const bh = LEVEL_HEIGHT * t;
-    const g = this.add.graphics();
-    g.fillStyle(0x07111c, 0.98);
-    g.fillRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 4);
-    g.lineStyle(1, 0x2be4ff, 0.28);
-    g.strokeRoundedRect(bx - 14, by - 14, bw + 28, bh + 28, 4);
+    this.backingGraphics?.destroy();
+    this.backingGraphics = this.add.graphics();
+    this.backingGraphics.fillStyle(0x07111c, 0.98);
+    this.backingGraphics.fillRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 4);
+    this.backingGraphics.lineStyle(1, 0x2be4ff, 0.28);
+    this.backingGraphics.strokeRoundedRect(bx - 14, by - 14, bw + 28, bh + 28, 4);
   }
 
   private createChrome(): void {
@@ -455,11 +482,12 @@ export class GameScene extends Phaser.Scene {
     const by = this.BOARD_Y;
     const bw = LEVEL_WIDTH * t;
     const bh = LEVEL_HEIGHT * t;
-    const frame = this.add.graphics();
-    frame.lineStyle(3, 0x35d9ff, 0.9);
-    frame.strokeRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 4);
-    frame.lineStyle(1, 0xff4d9d, 0.45);
-    frame.strokeRoundedRect(bx - 2, by - 2, bw + 4, bh + 4, 2);
+    this.chromeGraphics?.destroy();
+    this.chromeGraphics = this.add.graphics();
+    this.chromeGraphics.lineStyle(3, 0x35d9ff, 0.9);
+    this.chromeGraphics.strokeRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 4);
+    this.chromeGraphics.lineStyle(1, 0xff4d9d, 0.45);
+    this.chromeGraphics.strokeRoundedRect(bx - 2, by - 2, bw + 4, bh + 4, 2);
   }
 
   private render(snapshot: GameSnapshot): void {
