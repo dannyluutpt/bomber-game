@@ -99,7 +99,7 @@ export class GameScene extends Phaser.Scene {
   private get BOARD_Y(): number { return 80; }
 
   preload(): void {
-    this.load.spritesheet("rpgCharacters", "/assets/rpg_16x16.png", {
+    this.load.spritesheet("rpgCharacters", `${import.meta.env.BASE_URL}assets/rpg_16x16.png`, {
       frameWidth: 16, frameHeight: 16
     });
   }
