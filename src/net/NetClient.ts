@@ -21,6 +21,36 @@ interface PeerError extends Error { type?: string; }
 const ROOM_ID_PREFIX = "bombpix-"; // namespace on the shared public broker so our
                                    // 6-digit codes don't collide with other PeerJS apps
 
+// Give up (and tell the user) if the data channel hasn't opened in this long.
+// A working connection completes in a few seconds; anything beyond this is a
+// NAT/firewall traversal failure that would otherwise hang forever.
+const CONNECT_TIMEOUT_MS = 20000;
+
+// --- WebRTC ICE configuration ------------------------------------------------
+// STUN lets two peers discover their public IP and punch a direct path. This
+// covers most home Wi-Fi routers (cone NAT).
+//
+// TURN *relays* the traffic through a server when a direct path is impossible —
+// needed for symmetric NAT (common on mobile data, corporate, and CGNAT). With no
+// TURN server, those players stay stuck on "connecting" (now surfaced as a timeout).
+//
+// There is NO reliable zero-signup public TURN server, so TURN is intentionally
+// left empty for you to fill in (see TURN_SERVERS below).
+const STUN_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" }
+];
+
+// TODO(you): To support players behind strict/symmetric NAT (e.g. mobile data),
+// create a free TURN account — e.g. Metered (https://dashboard.metered.ca,
+// ~50GB/month free) — and paste the iceServers array they give you here:
+//   { urls: "turn:YOUR_HOST:80", username: "USER", credential: "PASS" },
+//   { urls: "turn:YOUR_HOST:443?transport=tcp", username: "USER", credential: "PASS" }
+const TURN_SERVERS: RTCIceServer[] = [];
+
+const PEER_CONFIG = { config: { iceServers: [...STUN_SERVERS, ...TURN_SERVERS] } };
+
 /**
  * Thin wrapper around PeerJS for 1-host / 1-joiner sessions.
  * The 6-digit room code IS the host's broker ID — uniqueness is enforced by the
@@ -38,6 +68,7 @@ export class NetClient {
 
   private peer: Peer | null = null;
   private conn: DataConnection | null = null;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Create a room. Resolves with the 6-digit code once the broker has accepted it.
@@ -53,7 +84,7 @@ export class NetClient {
     return new Promise<string>((resolve, reject) => {
       const attempt = (remaining: number) => {
         const code = generateRoomCode();
-        const peer = new Peer(ROOM_ID_PREFIX + code);
+        const peer = new Peer(ROOM_ID_PREFIX + code, PEER_CONFIG);
         this.peer = peer;
 
         peer.on("open", () => {
@@ -89,13 +120,22 @@ export class NetClient {
     this.role = "joiner";
     this.code = code;
     return new Promise<void>((resolve, reject) => {
-      const peer = new Peer(); // let the broker assign us a random id
+      const peer = new Peer(PEER_CONFIG); // broker assigns us a random id (options-only overload)
       this.peer = peer;
+
+      // Fail loudly instead of hanging forever if traversal never completes.
+      this.connectTimer = setTimeout(() => {
+        if (this.conn?.open) return;
+        this.onError("Kết nối quá lâu — có thể do tường lửa/NAT chặn. Thử lại, hoặc cần TURN server (xem TURN_SERVERS).");
+        reject(new Error("connection timeout"));
+        this.destroy();
+      }, CONNECT_TIMEOUT_MS);
 
       peer.on("open", () => {
         // Reliable, ordered channel: snapshots tolerate loss, but dropping a "bomb"
         // or direction-change input would be very noticeable, so we never drop.
         const conn = peer.connect(ROOM_ID_PREFIX + code, { reliable: true });
+        logIceState(conn);
         this.attachConnection(conn, resolve);
       });
 
@@ -104,6 +144,7 @@ export class NetClient {
           ? "Không tìm thấy phòng. Kiểm tra lại mã."
           : describeError(err);
         this.onError(reason);
+        this.clearConnectTimer();
         reject(new Error(reason));
       });
     });
@@ -114,6 +155,7 @@ export class NetClient {
   }
 
   destroy(): void {
+    this.clearConnectTimer();
     this.conn?.close();
     this.peer?.destroy();
     this.conn = null;
@@ -122,16 +164,42 @@ export class NetClient {
     this.code = null;
   }
 
+  private clearConnectTimer(): void {
+    if (this.connectTimer !== null) {
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
+  }
+
   private attachConnection(conn: DataConnection, onOpen?: () => void): void {
     this.conn = conn;
     conn.on("open", () => {
+      this.clearConnectTimer();
       this.onPeerConnect();
       onOpen?.();
     });
     conn.on("data", (data) => this.onMessage(data as NetMessage));
     conn.on("close", () => this.onPeerClose());
-    conn.on("error", (err: PeerError) => this.onError(describeError(err)));
+    conn.on("error", (err: PeerError) => {
+      this.clearConnectTimer();
+      this.onError(describeError(err));
+    });
   }
+}
+
+// Log the underlying ICE connection state so a stuck "connecting" is diagnosable
+// from the browser console (look for "[net] ICE: ..."). No-op once connected/closed.
+function logIceState(conn: DataConnection): void {
+  const start = Date.now();
+  const timer = setInterval(() => {
+    const pc = conn.peerConnection;
+    const state = pc?.iceConnectionState;
+    if (state) console.info(`[net] ICE: ${state} (${Date.now() - start}ms)`);
+    if (!state || state === "connected" || state === "completed" ||
+        state === "failed" || state === "closed" || Date.now() - start > CONNECT_TIMEOUT_MS) {
+      clearInterval(timer);
+    }
+  }, 1000);
 }
 
 /** Random 6-digit code as a string, zero-padded (e.g. "042137"). */
