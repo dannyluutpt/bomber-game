@@ -97,7 +97,7 @@
             <h1>Luật chơi</h1>
             <div class="guide-grid">
               <div><strong>1 người:</strong> WASD di chuyển, Space đặt bom. Diệt quái, mở cổng thoát, bước vào để thắng.</div>
-              <div><strong>2 người:</strong> P1 dùng WASD+Space, P2 dùng mũi tên+Enter. Người sống sót cuối cùng thắng.</div>
+              <div><strong>2 người (online):</strong> Một người tạo mã phòng 6 số, gửi mã cho bạn. Người kia nhập mã để vào. Mỗi người dùng WASD/mũi tên + Space/Enter trên máy mình. Người sống cuối cùng thắng.</div>
               <div><strong>Gem buff (tam giác):</strong> Rơi từ gạch vỡ. Hồng=máu, Tím=xuyên tường, Cam=mega blast, Vàng=tốc độ, Xanh lá=khiên.</div>
               <div><strong>Dây chuyền:</strong> Bom kích nổ bom khác — trừ bom của Viper.</div>
             </div>
@@ -118,12 +118,65 @@
                 <span>Chơi một mình, diệt quái và thoát qua cổng.</span>
               </button>
               <button class="choice-card" type="button" data-mode="versus">
-                <strong>2 Người</strong>
-                <span>Đấu với nhau và quái. Người sống cuối cùng thắng.</span>
+                <strong>2 Người (Online)</strong>
+                <span>Tạo hoặc nhập mã phòng để đấu với bạn qua mạng.</span>
               </button>
             </div>
             <div class="actions">
               <button class="back-main-button secondary" type="button">Quay lại</button>
+            </div>
+          </main>
+        </section>
+
+        <!-- ONLINE: CREATE OR JOIN -->
+        <section class="menu-shell hidden" data-screen="online">
+          <main class="menu-main">
+            <p class="eyebrow">CHƠI ONLINE</p>
+            <h1>Tạo hoặc vào phòng</h1>
+            <div class="choice-grid mode-grid">
+              <button class="choice-card" type="button" id="create-room-button">
+                <strong>Tạo mã phòng</strong>
+                <span>Tạo mã 6 số rồi gửi cho bạn cùng chơi.</span>
+              </button>
+              <button class="choice-card" type="button" id="join-room-button">
+                <strong>Nhập mã phòng</strong>
+                <span>Nhập mã bạn nhận được để vào phòng.</span>
+              </button>
+            </div>
+            <div class="actions">
+              <button class="back-mode-button secondary" type="button">Quay lại</button>
+            </div>
+          </main>
+        </section>
+
+        <!-- ROOM: HOST WAITING (shows the generated code) -->
+        <section class="menu-shell hidden" data-screen="create-room">
+          <main class="menu-main">
+            <p class="eyebrow">MÃ PHÒNG CỦA BẠN</p>
+            <h1>Chia sẻ mã này</h1>
+            <div class="room-code" id="room-code-display">------</div>
+            <div class="actions vertical">
+              <button id="copy-code-button" type="button" class="secondary">Sao chép mã</button>
+            </div>
+            <p class="menu-copy" id="create-room-status">Đang chờ người chơi 2 kết nối…</p>
+            <div class="actions">
+              <button class="back-online-button secondary" type="button">Hủy</button>
+            </div>
+          </main>
+        </section>
+
+        <!-- ROOM: JOIN (enter a code) -->
+        <section class="menu-shell hidden" data-screen="join-room">
+          <main class="menu-main">
+            <p class="eyebrow">VÀO PHÒNG</p>
+            <h1>Nhập mã phòng</h1>
+            <input id="room-code-input" class="room-code-input" type="text"
+                   inputmode="numeric" maxlength="6" placeholder="000000"
+                   autocomplete="off" />
+            <p class="menu-copy" id="join-room-status">Nhập mã 6 số bạn nhận được.</p>
+            <div class="actions">
+              <button id="connect-room-button" type="button">Kết nối</button>
+              <button class="back-online-button secondary" type="button">Quay lại</button>
             </div>
           </main>
         </section>

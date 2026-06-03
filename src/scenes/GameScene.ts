@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { CHARACTERS, DIFFICULTIES, GameModel } from "../simulation/GameModel";
 import { LEVEL_HEIGHT, LEVEL_WIDTH } from "../simulation/level";
+import { NetClient, type NetMessage, type NetRole } from "../net/NetClient";
 import type {
   BuffType,
   CharacterId,
@@ -25,7 +26,7 @@ const COLORS = {
   gemSpeedSurge: 0xffd166, gemShield: 0x06d6a0
 };
 
-type MenuScreen = "main" | "guide" | "mode" | "difficulty" | "character" | "character-p2" | "status";
+type MenuScreen = "main" | "guide" | "mode" | "online" | "create-room" | "join-room" | "difficulty" | "character" | "character-p2" | "status";
 
 export class GameScene extends Phaser.Scene {
   private model = new GameModel();
@@ -62,6 +63,20 @@ export class GameScene extends Phaser.Scene {
   private backingGraphics?: Phaser.GameObjects.Graphics;
   private chromeGraphics?: Phaser.GameObjects.Graphics;
   private boundDomKeydown = (e: KeyboardEvent) => this.handleDomKeydown(e);
+
+  // --- Online multiplayer (host-authoritative over PeerJS) ---
+  // host: owns the GameModel, applies remote input to player 1, broadcasts snapshots.
+  // joiner: runs no simulation — renders host snapshots, streams its input to the host.
+  private net: NetClient | null = null;
+  private netRole: NetRole = "none";
+  private latestSnapshot: GameSnapshot | null = null; // joiner: most recent host frame
+  private remoteDir: Direction | null = null;         // host: joiner's held direction
+  private remoteBombQueued = false;                    // host: joiner pressed bomb
+  private lastSentDir: Direction | null = null;        // joiner: dedupe dir messages
+  private myCharChosen = false;                         // online char-select lock
+  private remoteChar: CharacterId | null = null;       // the other player's pick
+  private snapAccumMs = 0;                              // host: snapshot send throttle
+  private static readonly SNAP_INTERVAL_MS = 33;        // ~30 Hz broadcast
 
   private hud = {
     score: document.querySelector<HTMLElement>("#score"),
@@ -199,11 +214,25 @@ export class GameScene extends Phaser.Scene {
       this.lastLayoutCheck = time;
       if (this.refreshLayout()) this.redrawStaticLayers();
     }
+
+    // Joiner: no local simulation. Stream input to host, render host's last frame.
+    if (this.netRole === "joiner") {
+      this.handleJoinerInput(time);
+      if (this.latestSnapshot) {
+        this.render(this.latestSnapshot);
+        this.updateDom(this.latestSnapshot);
+      }
+      return;
+    }
+
+    // Host / single player: run the authoritative simulation.
     this.handleInput(time);
+    if (this.netRole === "host") this.applyRemoteInput(time);
     this.model.update(time, delta);
     const snapshot = this.model.snapshot();
     this.render(snapshot);
     this.updateDom(snapshot);
+    if (this.netRole === "host") this.broadcastSnapshot(snapshot, delta);
   }
 
   // Ease a sprite's rendered position toward its target cell centre. Frame-rate
@@ -228,7 +257,11 @@ export class GameScene extends Phaser.Scene {
     this.hud.resume?.addEventListener("click", () => this.resumeGame());
     this.hud.restart?.addEventListener("click", () => this.restartGame());
     this.hud.mainMenu?.addEventListener("click", () => this.returnToMainMenu());
-    this.hud.backDifficulty?.addEventListener("click", () => this.showScreen("difficulty"));
+    this.hud.backDifficulty?.addEventListener("click", () => {
+      // In an online session the character screen sits after the room flow, not difficulty.
+      if (this.netRole !== "none") { this.leaveNet(); this.showScreen("online"); return; }
+      this.showScreen("difficulty");
+    });
     this.hud.backDifficultyP2?.addEventListener("click", () => this.showScreen("character"));
     this.hud.pause?.addEventListener("click", () => this.togglePause());
 
@@ -243,8 +276,25 @@ export class GameScene extends Phaser.Scene {
       btn.addEventListener("click", () => {
         this.selectedMode = btn.dataset.mode as GameMode;
         this.markActive("[data-mode]", btn);
-        this.showScreen("difficulty");
+        // "versus" is now online-only: choose to create or join a room.
+        this.showScreen(this.selectedMode === "versus" ? "online" : "difficulty");
       });
+    });
+
+    // --- Online room flow ---
+    document.querySelector<HTMLButtonElement>("#create-room-button")
+      ?.addEventListener("click", () => this.startHosting());
+    document.querySelector<HTMLButtonElement>("#join-room-button")
+      ?.addEventListener("click", () => {
+        this.setJoinStatus("Nhập mã 6 số bạn nhận được.");
+        this.showScreen("join-room");
+      });
+    document.querySelector<HTMLButtonElement>("#connect-room-button")
+      ?.addEventListener("click", () => this.startJoining());
+    document.querySelector<HTMLButtonElement>("#copy-code-button")
+      ?.addEventListener("click", () => this.copyRoomCode());
+    document.querySelectorAll<HTMLButtonElement>(".back-online-button").forEach((btn) => {
+      btn.addEventListener("click", () => { this.leaveNet(); this.showScreen("online"); });
     });
 
     document.querySelectorAll<HTMLButtonElement>("[data-difficulty]").forEach((btn) => {
@@ -257,6 +307,11 @@ export class GameScene extends Phaser.Scene {
 
     document.querySelectorAll<HTMLButtonElement>("[data-character-p1]").forEach((btn) => {
       btn.addEventListener("click", () => {
+        // Online: this screen is shared by both peers; the click picks YOUR character.
+        if (this.netRole !== "none") {
+          this.handleOnlineCharPick(btn.dataset.characterP1 as CharacterId, btn);
+          return;
+        }
         this.selectedCharacters[0] = btn.dataset.characterP1 as CharacterId;
         this.markActive("[data-character-p1]", btn);
         if (this.selectedMode === "versus") {
@@ -308,6 +363,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private restartGame(): void {
+    // Online: only the host restarts authoritatively; the joiner asks the host to.
+    if (this.netRole === "host") { this.startOnlineMatchAsHost(); return; }
+    if (this.netRole === "joiner") { this.net?.send({ t: "restart" }); return; }
     this.lastBrickCount = -1;
     this.renderPos.clear();
     this.model.start({
@@ -329,12 +387,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   private returnToMainMenu(): void {
+    if (this.netRole !== "none") { this.leaveNet(); this.showScreen("main"); return; }
     const snapshot = this.model.snapshot();
     if (snapshot.phase === "playing") this.model.setPaused(true);
     this.showScreen("main");
   }
 
   private togglePause(): void {
+    // Pausing is disabled online — there is no clean way to pause both peers.
+    if (this.netRole !== "none") return;
     const { phase } = this.model.snapshot();
     if (phase === "playing") {
       this.model.setPaused(true);
@@ -365,6 +426,7 @@ export class GameScene extends Phaser.Scene {
     if (this.hud.statusTitle) this.hud.statusTitle.textContent = title;
     if (this.hud.statusCopy) this.hud.statusCopy.textContent = copy;
     if (this.hud.resume) this.hud.resume.style.display = canResume ? "" : "none";
+    if (this.hud.restart) this.hud.restart.style.display = "";
     this.showScreen("status");
   }
 
@@ -373,7 +435,9 @@ export class GameScene extends Phaser.Scene {
     if (this.model.phase !== "playing") return;
 
     this.handlePlayerInput(0, time);
-    if (this.model.mode === "versus") this.handlePlayerInput(1, time);
+    // Local 2nd-player input only exists in legacy single-machine versus; online host
+    // gets player 1's input from the network instead (see applyRemoteInput).
+    if (this.model.mode === "versus" && this.netRole === "none") this.handlePlayerInput(1, time);
   }
 
   private handlePlayerInput(playerIndex: 0 | 1, time: number): void {
@@ -381,11 +445,13 @@ export class GameScene extends Phaser.Scene {
     if (!player?.alive) return;
 
     const isSingle = this.model.mode === "single";
+    // The host's local human owns player 0 with full controls (WASD + arrows + Space/Enter),
+    // just like single player, since the joiner is a separate machine.
+    const fullControls = isSingle || this.netRole === "host";
 
     if (playerIndex === 0) {
-      // In single player, both SPACE and ENTER plant bomb (backward-compatible)
       const bomb = Phaser.Input.Keyboard.JustDown(this.keys.SPACE) ||
-        (isSingle && Phaser.Input.Keyboard.JustDown(this.keys.ENTER));
+        (fullControls && Phaser.Input.Keyboard.JustDown(this.keys.ENTER));
       if (bomb) this.model.plantBomb(0, time);
     } else {
       if (Phaser.Input.Keyboard.JustDown(this.keys.ENTER)) this.model.plantBomb(1, time);
@@ -394,7 +460,7 @@ export class GameScene extends Phaser.Scene {
     if (time < this.moveCooldown[playerIndex]) return;
 
     const dir = playerIndex === 0
-      ? this.readDirectionP1(isSingle)
+      ? this.readDirectionP1(fullControls)
       : this.readDirectionP2();
     if (!dir) return;
 
@@ -448,7 +514,11 @@ export class GameScene extends Phaser.Scene {
     });
     controls.querySelector<HTMLButtonElement>("[data-action='bomb']")?.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      if (this.model.snapshot().phase === "playing") this.model.plantBomb(0, this.time.now);
+      if (this.netRole === "joiner") {
+        if (this.latestSnapshot?.phase === "playing") this.net?.send({ t: "bomb" });
+      } else if (this.model.snapshot().phase === "playing") {
+        this.model.plantBomb(0, this.time.now);
+      }
     });
   }
 
@@ -730,6 +800,257 @@ export class GameScene extends Phaser.Scene {
       if (this.hud.range2) this.hud.range2.textContent = p1.bombRange.toString();
       if (this.hud.lives2) this.hud.lives2.textContent = p1.alive ? p1.lives.toString() : "✕";
     }
+  }
+
+  // ===========================================================================
+  //  Online multiplayer (PeerJS, host-authoritative)
+  // ===========================================================================
+
+  private setupNet(): void {
+    this.net?.destroy();
+    this.net = new NetClient();
+    this.net.onPeerConnect = () => this.onPeerConnected();
+    this.net.onPeerClose = () => this.onPeerClosed();
+    this.net.onError = (reason) => this.onNetError(reason);
+    this.net.onMessage = (msg) => this.onNetMessage(msg);
+  }
+
+  private async startHosting(): Promise<void> {
+    this.setupNet();
+    this.netRole = "host";
+    this.setRoomCodeDisplay("······");
+    this.setCreateStatus("Đang tạo phòng…");
+    this.showScreen("create-room");
+    try {
+      const code = await this.net!.host();
+      this.setRoomCodeDisplay(code);
+      this.setCreateStatus("Đang chờ người chơi 2 kết nối…");
+    } catch {
+      this.setCreateStatus("Không tạo được phòng. Bấm Hủy rồi thử lại.");
+    }
+  }
+
+  private async startJoining(): Promise<void> {
+    const input = document.querySelector<HTMLInputElement>("#room-code-input");
+    const code = (input?.value ?? "").replace(/\D/g, "");
+    if (code.length !== 6) { this.setJoinStatus("Mã phải gồm đúng 6 chữ số."); return; }
+
+    this.setupNet();
+    this.netRole = "joiner";
+    this.setJoinStatus("Đang kết nối…");
+    try {
+      await this.net!.join(code);
+      // onPeerConnected() advances both peers to character select.
+    } catch {
+      // The human-readable reason was already shown via onNetError().
+      this.net?.destroy();
+      this.net = null;
+      this.netRole = "none";
+    }
+  }
+
+  private copyRoomCode(): void {
+    const code = this.net?.code;
+    if (!code) return;
+    navigator.clipboard?.writeText(code).then(
+      () => this.setCreateStatus(`Đã sao chép mã ${code}. Gửi cho bạn nhé!`),
+      () => { /* clipboard blocked — user can still read the code */ }
+    );
+  }
+
+  private leaveNet(): void {
+    this.net?.destroy();
+    this.net = null;
+    this.netRole = "none";
+    this.latestSnapshot = null;
+    this.remoteDir = null;
+    this.remoteBombQueued = false;
+    this.lastSentDir = null;
+    this.myCharChosen = false;
+    this.remoteChar = null;
+  }
+
+  private onPeerConnected(): void {
+    // Both peers are linked — jump straight into character select (no lobby).
+    this.myCharChosen = false;
+    this.remoteChar = null;
+    this.selectedMode = "versus";
+    this.resetCharSelectUI();
+    this.setCharSelectEyebrow("CHỌN NHÂN VẬT CỦA BẠN");
+    this.showScreen("character");
+  }
+
+  private onPeerClosed(): void {
+    if (this.netRole === "none") return;
+    this.net?.destroy();
+    this.net = null;
+    this.netRole = "none";
+    this.showStatus("MẤT KẾT NỐI", "Đối thủ đã rời", "Quay lại menu chính để chơi tiếp.", false);
+    if (this.hud.restart) this.hud.restart.style.display = "none";
+  }
+
+  private onNetError(reason: string): void {
+    if (this.netRole === "joiner") this.setJoinStatus(reason);
+    else this.setCreateStatus(reason);
+  }
+
+  private onNetMessage(msg: NetMessage): void {
+    switch (msg.t) {
+      case "char": {
+        this.remoteChar = msg.id;
+        const otherIndex = this.netRole === "host" ? 1 : 0;
+        this.selectedCharacters[otherIndex] = msg.id;
+        if (this.netRole === "host") this.maybeStartOnline();
+        break;
+      }
+      case "start":
+        // Joiner adopts the host's authoritative match parameters.
+        this.selectedCharacters = [...msg.characters];
+        this.selectedDifficulty = msg.difficulty;
+        this.beginOnlineMatchAsJoiner();
+        break;
+      case "snap":
+        this.latestSnapshot = msg.s;
+        break;
+      case "dir":
+        this.remoteDir = msg.dir;
+        break;
+      case "bomb":
+        this.remoteBombQueued = true;
+        break;
+      case "restart":
+        if (this.netRole === "host") this.startOnlineMatchAsHost();
+        break;
+    }
+  }
+
+  private handleOnlineCharPick(id: CharacterId, btn: HTMLButtonElement): void {
+    if (this.myCharChosen) return;
+    this.myCharChosen = true;
+    this.markActive("[data-character-p1]", btn);
+    const myIndex = this.netRole === "host" ? 0 : 1;
+    this.selectedCharacters[myIndex] = id;
+    this.net?.send({ t: "char", id });
+    this.setCharSelectEyebrow("ĐÃ CHỌN — CHỜ ĐỐI THỦ…");
+    if (this.netRole === "host") this.maybeStartOnline();
+  }
+
+  // Host only: start the match once both characters are locked in.
+  private maybeStartOnline(): void {
+    if (this.netRole !== "host") return;
+    if (!this.myCharChosen || this.remoteChar === null) return;
+    this.startOnlineMatchAsHost();
+  }
+
+  private startOnlineMatchAsHost(): void {
+    const seed = this.nextSeed();
+    const difficulty = this.selectedDifficulty;
+    const characters: [CharacterId, CharacterId] = [...this.selectedCharacters];
+    this.net?.send({ t: "start", seed, difficulty, characters });
+    this.prepareOnlineRender();
+    this.model.start({
+      difficulty,
+      characters: [...characters],
+      mode: "versus",
+      seed,
+      now: this.time.now
+    });
+    this.lastPhase = "playing";
+    this.hideOverlay();
+  }
+
+  private beginOnlineMatchAsJoiner(): void {
+    this.latestSnapshot = null;
+    this.lastSentDir = null;
+    this.prepareOnlineRender();
+    this.lastPhase = "playing";
+    this.hideOverlay();
+  }
+
+  // Reset the renderer/network buffers shared by both roles at match start.
+  private prepareOnlineRender(): void {
+    this.selectedMode = "versus";
+    this.lastBrickCount = -1;
+    this.renderPos.clear();
+    this.remoteDir = null;
+    this.remoteBombQueued = false;
+    this.snapAccumMs = 0;
+    if (this.hud.p2strip) this.hud.p2strip.style.display = "";
+  }
+
+  // Host: feed the joiner's streamed input into player 1, reusing the same
+  // cooldown-gated stepping the local players use.
+  private applyRemoteInput(time: number): void {
+    if (this.model.phase !== "playing") return;
+    const p1 = this.model.players[1];
+    if (!p1?.alive) { this.remoteBombQueued = false; return; }
+
+    if (this.remoteBombQueued) {
+      this.model.plantBomb(1, time);
+      this.remoteBombQueued = false;
+    }
+    if (time < this.moveCooldown[1]) return;
+    if (!this.remoteDir) return;
+    if (this.model.movePlayer(1, this.remoteDir, time)) {
+      const spd = this.model.getEffectiveSpeed(1);
+      this.moveCooldown[1] = time + Math.max(75, 170 - spd * 25);
+    }
+  }
+
+  // Joiner: read local controls and stream them to the host (edge-based to keep
+  // the channel quiet — only send when the held direction actually changes).
+  private handleJoinerInput(_time: number): void {
+    if (!this.net) return;
+    if (this.latestSnapshot?.phase !== "playing") return;
+
+    if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE) ||
+        Phaser.Input.Keyboard.JustDown(this.keys.ENTER)) {
+      this.net.send({ t: "bomb" });
+    }
+    const dir = this.readAnyDirection();
+    if (dir !== this.lastSentDir) {
+      this.lastSentDir = dir;
+      this.net.send({ t: "dir", dir });
+    }
+  }
+
+  private readAnyDirection(): Direction | null {
+    if (this.keys.A.isDown || this.cursors.left.isDown) return "left";
+    if (this.keys.D.isDown || this.cursors.right.isDown) return "right";
+    if (this.keys.W.isDown || this.cursors.up.isDown) return "up";
+    if (this.keys.S.isDown || this.cursors.down.isDown) return "down";
+    return this.activeTouchDirection;
+  }
+
+  private broadcastSnapshot(snapshot: GameSnapshot, delta: number): void {
+    this.snapAccumMs += delta;
+    if (this.snapAccumMs < GameScene.SNAP_INTERVAL_MS) return;
+    this.snapAccumMs = 0;
+    this.net?.send({ t: "snap", s: snapshot });
+  }
+
+  // --- Online UI helpers ---
+  private setRoomCodeDisplay(text: string): void {
+    const el = document.querySelector<HTMLElement>("#room-code-display");
+    if (el) el.textContent = text;
+  }
+  private setCreateStatus(text: string): void {
+    const el = document.querySelector<HTMLElement>("#create-room-status");
+    if (el) el.textContent = text;
+  }
+  private setJoinStatus(text: string): void {
+    const el = document.querySelector<HTMLElement>("#join-room-status");
+    if (el) el.textContent = text;
+  }
+  private setCharSelectEyebrow(text: string): void {
+    const el = document.querySelector<HTMLElement>('[data-screen="character"] .eyebrow');
+    if (el) el.textContent = text;
+  }
+  private resetCharSelectUI(): void {
+    document.querySelectorAll<HTMLButtonElement>("[data-character-p1]").forEach((btn) => {
+      btn.classList.remove("active", "taken");
+      btn.disabled = false;
+    });
   }
 
   private cellCenter(cell: Vec2, t: number): Vec2 {
