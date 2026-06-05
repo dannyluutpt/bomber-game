@@ -160,13 +160,6 @@ export class GameModel {
     this.pickPowerUp(playerIndex, next);
     this.pickGem(playerIndex, next);
 
-    if (this.mode === "single" && this.exitOpen && sameCell(next, this.exitCell)) {
-      this.phase = "won";
-      this.winnerIndex = playerIndex;
-      this.scores[playerIndex] += 1000 + this.timeLeft * 5;
-      this.message = "Bạn đã thoát khỏi mê cung!";
-    }
-
     this.checkAllPlayerHazards(now);
     return true;
   }
@@ -241,15 +234,6 @@ export class GameModel {
 
     const aliveCount = this.players.filter((p) => p.alive).length;
 
-    // Exit gate is a single-player objective only. In versus the win condition is
-    // last-player-standing, so no gate is created (it would just confuse players).
-    if (this.mode === "single" && !this.exitOpen && this.enemies.length === 0) {
-      this.exitOpen = true;
-      this.tiles[this.exitCell.y][this.exitCell.x] = "exit";
-      this.message = "Cổng thoát đã mở!";
-      this.scores[0] += 250;
-    }
-
     if (this.mode === "versus") {
       // To win you must clear EVERYTHING: outlast the other player AND wipe out
       // all NPC monsters. Eliminating only your opponent is not enough.
@@ -263,10 +247,18 @@ export class GameModel {
         this.winnerIndex = winner.index;
         this.message = `Người chơi ${winner.index + 1} thắng!`;
       }
-    } else if (aliveCount === 0) {
-      this.phase = "lost";
-      this.winnerIndex = null;
-      this.message = "Bạn đã bị hạ gục!";
+    } else {
+      // Single player: kill every monster to win; die and you lose. No exit gate.
+      if (aliveCount === 0) {
+        this.phase = "lost";
+        this.winnerIndex = null;
+        this.message = "Bạn đã bị hạ gục!";
+      } else if (this.enemies.length === 0) {
+        this.phase = "won";
+        this.winnerIndex = 0;
+        this.scores[0] += 500 + this.timeLeft * 5;
+        this.message = "Đã tiêu diệt toàn bộ kẻ địch!";
+      }
     }
   }
 

@@ -169,6 +169,28 @@ test("NPCs do not plant attack bombs through walls", async () => {
   assert.equal(model.bombs.length, 0);
 });
 
+test("Single player wins the moment every monster is cleared", async () => {
+  const { GameModel } = await loadGameModule();
+  const model = new GameModel();
+
+  model.start({
+    difficulty: "hard",
+    mode: "single",
+    characters: ["nova"],
+    seed: 7331,
+    now: 0
+  });
+
+  assert.ok(model.enemies.length > 0);
+  assert.equal(model.phase, "playing");
+
+  model.enemies = []; // simulate the last NPC being destroyed
+  model.update(1, 16);
+
+  assert.equal(model.phase, "won");
+  assert.equal(model.winnerIndex, 0);
+});
+
 test("NPCs avoid planting bombs that would hit another NPC", async () => {
   const { GameModel } = await loadGameModule();
   const model = new GameModel();
