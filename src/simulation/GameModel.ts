@@ -240,22 +240,24 @@ export class GameModel {
     if (this.phase !== "playing") return;
 
     const aliveCount = this.players.filter((p) => p.alive).length;
-    const playerCount = this.mode === "versus" ? 2 : 1;
 
-    if (!this.exitOpen && this.enemies.length === 0) {
+    // Exit gate is a single-player objective only. In versus the win condition is
+    // last-player-standing, so no gate is created (it would just confuse players).
+    if (this.mode === "single" && !this.exitOpen && this.enemies.length === 0) {
       this.exitOpen = true;
       this.tiles[this.exitCell.y][this.exitCell.x] = "exit";
       this.message = "Cổng thoát đã mở!";
       this.scores[0] += 250;
-      if (playerCount > 1) this.scores[1] += 250;
     }
 
     if (this.mode === "versus") {
+      // Pure last-man-standing: the moment one player is eliminated, the other
+      // wins — regardless of any remaining NPC monsters.
       if (aliveCount === 0) {
         this.phase = "lost";
         this.winnerIndex = null;
         this.message = "Cả hai cùng bị hạ!";
-      } else if (aliveCount === 1 && this.enemies.length === 0) {
+      } else if (aliveCount === 1) {
         const winner = this.players.find((p) => p.alive)!;
         this.phase = "won";
         this.winnerIndex = winner.index;
