@@ -251,13 +251,13 @@ export class GameModel {
     }
 
     if (this.mode === "versus") {
-      // Pure last-man-standing: the moment one player is eliminated, the other
-      // wins — regardless of any remaining NPC monsters.
+      // To win you must clear EVERYTHING: outlast the other player AND wipe out
+      // all NPC monsters. Eliminating only your opponent is not enough.
       if (aliveCount === 0) {
         this.phase = "lost";
         this.winnerIndex = null;
         this.message = "Cả hai cùng bị hạ!";
-      } else if (aliveCount === 1) {
+      } else if (aliveCount === 1 && this.enemies.length === 0) {
         const winner = this.players.find((p) => p.alive)!;
         this.phase = "won";
         this.winnerIndex = winner.index;
