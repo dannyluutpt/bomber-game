@@ -42,12 +42,18 @@ const STUN_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun2.l.google.com:19302" }
 ];
 
-// TODO(you): To support players behind strict/symmetric NAT (e.g. mobile data),
-// create a free TURN account — e.g. Metered (https://dashboard.metered.ca,
-// ~50GB/month free) — and paste the iceServers array they give you here:
-//   { urls: "turn:YOUR_HOST:80", username: "USER", credential: "PASS" },
-//   { urls: "turn:YOUR_HOST:443?transport=tcp", username: "USER", credential: "PASS" }
-const TURN_SERVERS: RTCIceServer[] = [];
+// TURN relay (Metered free tier) — required for players behind strict/symmetric
+// NAT (mobile data, corporate, CGNAT). These are *static long-lived* credentials
+// meant to live in the client; the account API key is deliberately NOT here.
+// Verified working with relay-only ICE. To rotate, regenerate at dashboard.metered.ca.
+const TURN_USER = "74e110b195fc7765a6fbfb42";
+const TURN_PASS = "Us9naHQGPaqkvmLx";
+const TURN_SERVERS: RTCIceServer[] = [
+  { urls: "turn:global.relay.metered.ca:80", username: TURN_USER, credential: TURN_PASS },
+  { urls: "turn:global.relay.metered.ca:80?transport=tcp", username: TURN_USER, credential: TURN_PASS },
+  { urls: "turn:global.relay.metered.ca:443", username: TURN_USER, credential: TURN_PASS },
+  { urls: "turns:global.relay.metered.ca:443?transport=tcp", username: TURN_USER, credential: TURN_PASS }
+];
 
 const PEER_CONFIG = { config: { iceServers: [...STUN_SERVERS, ...TURN_SERVERS] } };
 
