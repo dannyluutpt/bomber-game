@@ -1,5 +1,5 @@
 import Peer, { type DataConnection } from "peerjs";
-import type { CharacterId, DifficultyId, Direction, GameSnapshot } from "../simulation/types";
+import type { CharacterId, DifficultyId, Direction, GameSnapshot, MapThemeId } from "../simulation/types";
 
 // --- Wire protocol -----------------------------------------------------------
 // Messages exchanged over the WebRTC DataChannel. Kept small & JSON-serialisable.
@@ -10,7 +10,7 @@ export type NetMessage =
   | { t: "dir"; dir: Direction | null }
   | { t: "bomb" }
   | { t: "restart" }
-  | { t: "start"; seed: number; difficulty: DifficultyId; characters: [CharacterId, CharacterId] }
+  | { t: "start"; seed: number; difficulty: DifficultyId; characters: [CharacterId, CharacterId]; theme: MapThemeId }
   | { t: "snap"; s: GameSnapshot };
 
 export type NetRole = "none" | "host" | "joiner";

@@ -6,6 +6,7 @@ export type GamePhase = "ready" | "playing" | "paused" | "won" | "lost";
 export type DifficultyId = "easy" | "normal" | "hard";
 export type CharacterId = "nova" | "orion" | "titan" | "ghost" | "echo" | "viper";
 export type GameMode = "single" | "versus";
+export type MapThemeId = "space" | "ice" | "industrial";
 export type BombOwner = "player0" | "player1" | "enemy";
 
 export interface DifficultyConfig {

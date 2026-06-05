@@ -385,6 +385,43 @@ h1 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.map-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.theme-card {
+  text-align: center;
+}
+
+.theme-preview {
+  display: block;
+  width: 100%;
+  height: 104px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.theme-preview-space {
+  background:
+    radial-gradient(circle at 30% 30%, rgba(31, 125, 95, 0.6), transparent 62%),
+    linear-gradient(180deg, #081019, #0a2a24);
+  box-shadow: inset 0 0 34px rgba(255, 165, 59, 0.2);
+}
+
+.theme-preview-ice {
+  background:
+    radial-gradient(circle at 62% 38%, rgba(138, 72, 192, 0.6), transparent 62%),
+    linear-gradient(180deg, #1a1030, #3a1440);
+  box-shadow: inset 0 0 34px rgba(79, 214, 255, 0.26);
+}
+
+.theme-preview-industrial {
+  background:
+    radial-gradient(circle at 50% 28%, rgba(156, 36, 54, 0.66), transparent 62%),
+    linear-gradient(180deg, #2a0a12, #4a0e16);
+  box-shadow: inset 0 0 34px rgba(255, 90, 42, 0.3);
+}
+
 .choice-card.taken {
   opacity: 0.4;
   cursor: not-allowed;

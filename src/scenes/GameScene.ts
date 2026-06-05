@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { CHARACTERS, DIFFICULTIES, GameModel } from "../simulation/GameModel";
 import { LEVEL_HEIGHT, LEVEL_WIDTH } from "../simulation/level";
 import { NetClient, type NetMessage, type NetRole } from "../net/NetClient";
+import { THEMES, type MapTheme } from "../render/themes";
 import type {
   BuffType,
   CharacterId,
@@ -9,6 +10,7 @@ import type {
   Direction,
   GameMode,
   GameSnapshot,
+  MapThemeId,
   Player,
   PowerUpType,
   Vec2
@@ -26,7 +28,7 @@ const COLORS = {
   gemSpeedSurge: 0xffd166, gemShield: 0x06d6a0
 };
 
-type MenuScreen = "main" | "guide" | "mode" | "online" | "create-room" | "join-room" | "difficulty" | "character" | "character-p2" | "status";
+type MenuScreen = "main" | "guide" | "mode" | "online" | "create-room" | "join-room" | "difficulty" | "character" | "character-p2" | "map" | "status";
 
 export class GameScene extends Phaser.Scene {
   private model = new GameModel();
@@ -55,6 +57,7 @@ export class GameScene extends Phaser.Scene {
   private selectedDifficulty: DifficultyId = "normal";
   private selectedCharacters: [CharacterId, CharacterId] = ["nova", "orion"];
   private selectedMode: GameMode = "single";
+  private selectedTheme: MapThemeId = "space";
   private lastSeed = 0;
   private hudOffset = 88;
   private touchBottom = 0;
@@ -62,6 +65,7 @@ export class GameScene extends Phaser.Scene {
   private bgGraphics?: Phaser.GameObjects.Graphics;
   private backingGraphics?: Phaser.GameObjects.Graphics;
   private chromeGraphics?: Phaser.GameObjects.Graphics;
+  private stars?: { x: number; y: number; r: number; a: number }[];
   private boundDomKeydown = (e: KeyboardEvent) => this.handleDomKeydown(e);
 
   // --- Online multiplayer (host-authoritative over PeerJS) ---
@@ -107,6 +111,8 @@ export class GameScene extends Phaser.Scene {
   };
 
   constructor() { super("GameScene"); }
+
+  private get theme(): MapTheme { return THEMES[this.selectedTheme]; }
 
   // Returns true if layout measurements changed (caller should redraw static layers).
   private refreshLayout(): boolean {
@@ -314,13 +320,28 @@ export class GameScene extends Phaser.Scene {
         }
         this.selectedCharacters[0] = btn.dataset.characterP1 as CharacterId;
         this.markActive("[data-character-p1]", btn);
-        if (this.selectedMode === "versus") {
-          this.refreshP2CharacterScreen();
-          this.showScreen("character-p2");
-        } else {
-          this.startGame();
-        }
+        // Single player: character → map select → start.
+        this.showScreen("map");
       });
+    });
+
+    // --- Map / theme select ---
+    document.querySelectorAll<HTMLButtonElement>("[data-theme]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.selectedTheme = btn.dataset.theme as MapThemeId;
+        this.markActive("[data-theme]", btn);
+        if (this.netRole === "host") this.startOnlineMatchAsHost();
+        else this.startGame();
+      });
+    });
+    document.querySelector<HTMLButtonElement>("#back-map-button")?.addEventListener("click", () => {
+      if (this.netRole === "host") {
+        // let the host re-pick its character (which re-opens map select afterwards)
+        this.myCharChosen = false;
+        this.resetCharSelectUI();
+        this.setCharSelectEyebrow("CHỌN NHÂN VẬT CỦA BẠN");
+      }
+      this.showScreen("character");
     });
 
     document.querySelectorAll<HTMLButtonElement>("[data-character-p2]").forEach((btn) => {
@@ -347,6 +368,7 @@ export class GameScene extends Phaser.Scene {
   private startGame(): void {
     this.lastBrickCount = -1;
     this.renderPos.clear();
+    this.redrawStaticLayers(); // paint background/board in the chosen theme
     this.model.start({
       difficulty: this.selectedDifficulty,
       characters: [...this.selectedCharacters],
@@ -367,6 +389,7 @@ export class GameScene extends Phaser.Scene {
     if (this.netRole === "joiner") { this.net?.send({ t: "restart" }); return; }
     this.lastBrickCount = -1;
     this.renderPos.clear();
+    this.redrawStaticLayers();
     this.model.start({
       difficulty: this.selectedDifficulty,
       characters: [...this.selectedCharacters],
@@ -522,13 +545,32 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createBackground(): void {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const th = this.theme;
     if (!this.bgGraphics) this.bgGraphics = this.add.graphics();
     else this.bgGraphics.clear();
-    this.bgGraphics.fillStyle(0x050914, 1);
-    this.bgGraphics.fillRect(0, 0, this.scale.width, this.scale.height);
-    this.bgGraphics.lineStyle(1, 0x0e2534, 0.55);
-    for (let x = 0; x <= this.scale.width; x += 16) this.bgGraphics.lineBetween(x, 0, x, this.scale.height);
-    for (let y = 0; y <= this.scale.height; y += 16) this.bgGraphics.lineBetween(0, y, this.scale.width, y);
+    const g = this.bgGraphics;
+
+    // Vertical space gradient (top → bottom) sets the theme's overall mood.
+    g.fillGradientStyle(th.bgTop, th.bgTop, th.bgBottom, th.bgBottom, 1);
+    g.fillRect(0, 0, w, h);
+
+    // Soft nebula glows — translucent ellipses fake a coloured cloud cheaply.
+    g.fillStyle(th.nebula, 0.1);
+    g.fillEllipse(w * 0.28, h * 0.32, w * 0.6, h * 0.55);
+    g.fillStyle(th.nebula, 0.08);
+    g.fillEllipse(w * 0.76, h * 0.72, w * 0.55, h * 0.5);
+
+    // Starfield (positions stored in normalised coords so they stay put on resize).
+    if (!this.stars) this.stars = Array.from({ length: 90 }, () => ({
+      x: Math.random(), y: Math.random(),
+      r: Math.random() < 0.2 ? 1.8 : 1, a: 0.35 + Math.random() * 0.5
+    }));
+    for (const s of this.stars) {
+      g.fillStyle(th.star, s.a);
+      g.fillCircle(s.x * w, s.y * h, s.r);
+    }
   }
 
   private createBoardBacking(): void {
@@ -537,12 +579,13 @@ export class GameScene extends Phaser.Scene {
     const by = this.BOARD_Y;
     const bw = LEVEL_WIDTH * t;
     const bh = LEVEL_HEIGHT * t;
+    const th = this.theme;
     if (!this.backingGraphics) this.backingGraphics = this.add.graphics();
     else this.backingGraphics.clear();
-    this.backingGraphics.fillStyle(0x07111c, 0.98);
-    this.backingGraphics.fillRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 4);
-    this.backingGraphics.lineStyle(1, 0x2be4ff, 0.28);
-    this.backingGraphics.strokeRoundedRect(bx - 14, by - 14, bw + 28, bh + 28, 4);
+    this.backingGraphics.fillStyle(0x000000, 0.45);
+    this.backingGraphics.fillRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 6);
+    this.backingGraphics.lineStyle(1, th.accentSoft, 0.28);
+    this.backingGraphics.strokeRoundedRect(bx - 14, by - 14, bw + 28, bh + 28, 6);
   }
 
   private createChrome(): void {
@@ -551,12 +594,13 @@ export class GameScene extends Phaser.Scene {
     const by = this.BOARD_Y;
     const bw = LEVEL_WIDTH * t;
     const bh = LEVEL_HEIGHT * t;
+    const th = this.theme;
     if (!this.chromeGraphics) this.chromeGraphics = this.add.graphics();
     else this.chromeGraphics.clear();
-    this.chromeGraphics.lineStyle(3, 0x35d9ff, 0.9);
-    this.chromeGraphics.strokeRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 4);
-    this.chromeGraphics.lineStyle(1, 0xff4d9d, 0.45);
-    this.chromeGraphics.strokeRoundedRect(bx - 2, by - 2, bw + 4, bh + 4, 2);
+    this.chromeGraphics.lineStyle(3, th.accent, 0.9);
+    this.chromeGraphics.strokeRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 6);
+    this.chromeGraphics.lineStyle(1, th.accentSoft, 0.5);
+    this.chromeGraphics.strokeRoundedRect(bx - 2, by - 2, bw + 4, bh + 4, 3);
   }
 
   private render(snapshot: GameSnapshot): void {
@@ -598,6 +642,7 @@ export class GameScene extends Phaser.Scene {
 
   private drawTiles(snapshot: GameSnapshot, t: number): void {
     if (!snapshot.tiles.length) return;
+    const th = this.theme;
     const g = this.gTiles;
     g.clear();
     for (let y = 0; y < snapshot.height; y++) {
@@ -605,25 +650,52 @@ export class GameScene extends Phaser.Scene {
         const px = x * t;
         const py = y * t;
         const alt = (x + y) % 2 === 0;
-        g.fillStyle(alt ? COLORS.floor : COLORS.floorAlt, 1);
+        g.fillStyle(alt ? th.floor : th.floorAlt, 1);
         g.fillRect(px, py, t, t);
-        g.lineStyle(1, COLORS.grid, 0.28);
+        g.lineStyle(1, th.grid, 0.3);
         g.strokeRect(px, py, t, t);
         const tile = snapshot.tiles[y][x];
         if (tile === "wall") {
-          g.fillStyle(COLORS.wall, 1); g.fillRect(px + 4, py + 4, t - 8, t - 8);
-          g.fillStyle(COLORS.wallTop, 1); g.fillRect(px + 8, py + 8, t - 16, 6);
-          g.fillStyle(0x334254, 1); g.fillRect(px + 8, py + 26, t - 16, 4);
+          this.drawBlock(g, px, py, t, th.wall, th.wallTop, th.wallSide);
         } else if (tile === "brick") {
-          g.fillStyle(COLORS.brick, 1); g.fillRect(px + 5, py + 6, t - 10, t - 12);
-          g.fillStyle(COLORS.brickTop, 1); g.fillRect(px + 8, py + 9, t - 16, 5);
-          g.fillStyle(0x562419, 1); g.fillRect(px + 8, py + 22, t - 16, 3);
+          this.drawBlock(g, px, py, t, th.brick, th.brickTop, th.brickSide);
         } else if (tile === "exit") {
-          g.fillStyle(COLORS.exit, 0.25); g.fillRect(px + 5, py + 5, t - 10, t - 10);
-          g.lineStyle(3, COLORS.exit, 1); g.strokeRect(px + 9, py + 9, t - 18, t - 18);
+          g.fillStyle(th.accent, 0.22); g.fillRect(px + 5, py + 5, t - 10, t - 10);
+          g.lineStyle(3, th.accent, 1); g.strokeRect(px + 9, py + 9, t - 18, t - 18);
         }
       }
     }
+  }
+
+  // A faux-3D block: drop shadow + a darker "side" revealed at the bottom to fake
+  // height, a base body, a lit top strip and a left-edge bevel. Cheap but reads as 3D.
+  private drawBlock(
+    g: Phaser.GameObjects.Graphics,
+    px: number, py: number, t: number,
+    base: number, top: number, side: number
+  ): void {
+    const inset = Math.max(2, Math.floor(t * 0.09));
+    const w = t - inset * 2;
+    const lift = Math.max(2, Math.floor(t * 0.16)); // apparent block height
+    const bx = px + inset;
+    const by = py + inset;
+
+    // contact shadow on the floor
+    g.fillStyle(0x000000, 0.3);
+    g.fillEllipse(px + t / 2, py + t - inset * 0.5, w * 0.96, Math.max(3, inset * 1.5));
+    // dark lower face (the "side")
+    g.fillStyle(side, 1);
+    g.fillRect(bx, by, w, w);
+    // base body, shorter so the bottom `lift` band shows the side colour
+    g.fillStyle(base, 1);
+    g.fillRect(bx, by, w, w - lift);
+    // lit top strip
+    g.fillStyle(top, 1);
+    g.fillRect(bx + Math.floor(w * 0.12), by + Math.floor(w * 0.1),
+      Math.floor(w * 0.76), Math.max(3, Math.floor(t * 0.13)));
+    // left-edge bevel highlight
+    g.fillStyle(top, 0.3);
+    g.fillRect(bx, by, Math.max(2, Math.floor(t * 0.06)), w - lift);
   }
 
   private drawPowerUps(snapshot: GameSnapshot, t: number): void {
@@ -899,12 +971,15 @@ export class GameScene extends Phaser.Scene {
         const otherIndex = this.netRole === "host" ? 1 : 0;
         this.selectedCharacters[otherIndex] = msg.id;
         if (this.netRole === "host") this.maybeStartOnline();
+        // Joiner: once both have picked, the host is choosing the map.
+        else if (this.myCharChosen) this.setCharSelectEyebrow("CHỜ CHỦ PHÒNG CHỌN MAP…");
         break;
       }
       case "start":
-        // Joiner adopts the host's authoritative match parameters.
+        // Joiner adopts the host's authoritative match parameters (incl. theme).
         this.selectedCharacters = [...msg.characters];
         this.selectedDifficulty = msg.difficulty;
+        this.selectedTheme = msg.theme;
         this.beginOnlineMatchAsJoiner();
         break;
       case "snap":
@@ -933,18 +1008,18 @@ export class GameScene extends Phaser.Scene {
     if (this.netRole === "host") this.maybeStartOnline();
   }
 
-  // Host only: start the match once both characters are locked in.
+  // Host only: once both characters are locked, the host picks the map, then starts.
   private maybeStartOnline(): void {
     if (this.netRole !== "host") return;
     if (!this.myCharChosen || this.remoteChar === null) return;
-    this.startOnlineMatchAsHost();
+    this.showScreen("map");
   }
 
   private startOnlineMatchAsHost(): void {
     const seed = this.nextSeed();
     const difficulty = this.selectedDifficulty;
     const characters: [CharacterId, CharacterId] = [...this.selectedCharacters];
-    this.net?.send({ t: "start", seed, difficulty, characters });
+    this.net?.send({ t: "start", seed, difficulty, characters, theme: this.selectedTheme });
     this.prepareOnlineRender();
     this.model.start({
       difficulty,
@@ -973,6 +1048,7 @@ export class GameScene extends Phaser.Scene {
     this.remoteDir = null;
     this.remoteBombQueued = false;
     this.snapAccumMs = 0;
+    this.redrawStaticLayers(); // repaint background/board in the chosen theme
     if (this.hud.p2strip) this.hud.p2strip.style.display = "";
   }
 
