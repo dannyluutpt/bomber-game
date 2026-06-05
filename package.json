@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "test:simulation": "node --test test/simulation/GameModel.test.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1"
   },
@@ -14,6 +15,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-legacy": "^6.0.0",
+    "esbuild": "^0.28.0",
     "playwright": "^1.60.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"

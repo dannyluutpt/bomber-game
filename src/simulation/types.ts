@@ -55,6 +55,7 @@ export interface Player {
 export interface Enemy {
   id: number;
   cell: Vec2;
+  character: CharacterId;
   direction: Direction;
   nextMoveAt: number;
   maxBombs: number;

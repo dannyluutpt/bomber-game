@@ -334,9 +334,8 @@ export class GameScene extends Phaser.Scene {
 
   private refreshP2CharacterScreen(): void {
     document.querySelectorAll<HTMLButtonElement>("[data-character-p2]").forEach((btn) => {
-      const isTaken = btn.dataset.characterP2 === this.selectedCharacters[0];
-      btn.disabled = isTaken;
-      btn.classList.toggle("taken", isTaken);
+      btn.disabled = false;
+      btn.classList.remove("taken");
     });
   }
 
@@ -699,7 +698,6 @@ export class GameScene extends Phaser.Scene {
 
   private drawEnemies(snapshot: GameSnapshot, t: number): void {
     if (!snapshot.tiles.length) return;
-    const enemyFrames = [64, 72, 80, 88];
     const scale = (t / 40) * 2;
     const g = this.gDynamic;
     const shadowW = Math.floor(t * 0.7);
@@ -721,7 +719,7 @@ export class GameScene extends Phaser.Scene {
         }
         g.fillStyle(0x000000, 0.38);
         g.fillEllipse(c.x, c.y + shadowOffY, shadowW, shadowH);
-        sprite.setFrame(enemyFrames[i % enemyFrames.length]);
+        sprite.setFrame(CHARACTERS[enemy.character].spriteFrame);
         sprite.setPosition(c.x, c.y + 1);
         sprite.setScale(scale);
         sprite.setOrigin(0.5, 0.55);

@@ -319,21 +319,39 @@ export class GameModel {
 
   private createEnemies(): Enemy[] {
     const difficulty = DIFFICULTIES[this.difficulty];
+
+    // NPCs take on the characters NOT chosen by the humans. The two players may
+    // duplicate each other, but no NPC may share a human's character. With 6
+    // characters and at most 2 human picks there are always ≥4 left — enough to
+    // give each of the (≤4) NPCs a distinct character.
+    const playerCount = this.mode === "versus" ? 2 : 1;
+    const usedByHumans = new Set(this.selectedCharacters.slice(0, playerCount));
+    const available = (Object.keys(CHARACTERS) as CharacterId[])
+      .filter((id) => !usedByHumans.has(id))
+      .sort(() => Math.random() - 0.5); // shuffle for variety each match
+
     return ENEMY_SPAWNS
       .filter((cell) => this.tiles[cell.y]?.[cell.x] === "floor")
       .slice(0, difficulty.enemyCount)
-      .map((cell, index) => ({
-        id: this.nextId++,
-        cell: { ...cell },
-        direction: DIRECTIONS[index % DIRECTIONS.length],
-        nextMoveAt: this.phaserNow + 400 + index * 180,
-        maxBombs: 2,
-        bombRange: 2,
-        speed: 1,
-        activeBuffs: [],
-        // grace period before first bomb, relative to real match start
-        nextBombAt: this.phaserNow + 3500 + index * 1200
-      }));
+      .map((cell, index) => {
+        const charId = available[index % available.length] ?? "titan";
+        const character = CHARACTERS[charId];
+        return {
+          id: this.nextId++,
+          cell: { ...cell },
+          character: charId,
+          direction: DIRECTIONS[index % DIRECTIONS.length],
+          nextMoveAt: this.phaserNow + 400 + index * 180,
+          // Apply the character's signature perk (enemies always keep 1 life, so
+          // tank/guardian don't grant extra lives — tank just moves slower).
+          maxBombs: character.bonus === "multibomb" ? 3 : 2,
+          bombRange: character.bonus === "range" ? 3 : 2,
+          speed: character.bonus === "speed" ? 2 : character.bonus === "tank" ? 0 : 1,
+          activeBuffs: [],
+          // grace period before first bomb, relative to real match start
+          nextBombAt: this.phaserNow + 3500 + index * 1200
+        };
+      });
   }
 
   private canOccupy(cell: Vec2, forPlayerIndex?: 0 | 1): boolean {
@@ -391,40 +409,98 @@ export class GameModel {
   }
 
   private getEnemyMoveDirection(enemy: Enemy): Direction | null {
-    // Priority 1: flee from active bomb blast zones
-    const inBlast = this.bombs.some((b) => {
-      const dx = Math.abs(b.cell.x - enemy.cell.x);
-      const dy = Math.abs(b.cell.y - enemy.cell.y);
-      return (dx === 0 && dy <= b.range) || (dy === 0 && dx <= b.range);
-    });
-    if (inBlast) {
-      const fleeDir = this.getFleeFromBombsDirection(enemy);
+    const danger = this.blastDangerSet();
+    const inDanger = (cell: Vec2): boolean => danger.has(`${cell.x},${cell.y}`);
+
+    // Priority 1: if standing in a blast zone, BFS to the nearest truly-safe cell.
+    if (inDanger(enemy.cell)) {
+      const fleeDir = this.bfsFleeStep(enemy, danger);
       if (fleeDir) return fleeDir;
     }
 
     const playerTargets = this.playerCellKeys();
     const chase = this.bfsFirstStep(enemy, false, playerTargets);
 
-    // Priority 2: when safe, grab a nearby item if it is closer than the player
-    // (acts like a human player farming power-ups/gems instead of charging blindly)
+    // Priority 2: grab an item only if it's very close, not out of the way, and
+    // safe — hunting the player takes precedence over farming.
     const itemTargets = this.itemCellKeys();
     if (itemTargets.size > 0) {
       const item = this.bfsFirstStep(enemy, false, itemTargets);
-      if (item.dir && item.dist <= 6 && item.dist <= chase.dist) {
+      if (item.dir && item.firstCell && item.dist <= 3 && item.dist <= chase.dist &&
+          !inDanger(item.firstCell)) {
         return item.dir;
       }
     }
 
-    // Priority 3: hunt nearest alive player along the shortest OPEN path (bricks block)
-    if (chase.dir) return chase.dir;
+    // Priority 3: hunt the nearest player along the shortest OPEN path, but never
+    // step into a blast zone to do it.
+    if (chase.dir && chase.firstCell && !inDanger(chase.firstCell)) return chase.dir;
 
-    // Priority 4: no open path — wander (digging through bricks is handled by bombs)
-    if (this.canEnemyOccupy(add(enemy.cell, DIRS[enemy.direction]), enemy)) return enemy.direction;
+    // Priority 4: no open path (a brick is in the way). Advance toward the player
+    // through the brick-passable route so we walk up to the brick the bomb logic
+    // will dig — instead of wandering aimlessly.
+    const dig = this.bfsFirstStep(enemy, true, playerTargets);
+    if (dig.dir && dig.firstCell && !inDanger(dig.firstCell)) {
+      if (this.canEnemyOccupy(dig.firstCell, enemy)) return dig.dir; // open step closer
+      if (this.tiles[dig.firstCell.y][dig.firstCell.x] === "brick") return null; // hold to dig
+    }
+
+    // Priority 5: truly stuck — keep momentum, else any safe open cell.
+    const forward = add(enemy.cell, DIRS[enemy.direction]);
+    if (this.canEnemyOccupy(forward, enemy) && !inDanger(forward)) return enemy.direction;
     const shuffled = [...DIRECTIONS].sort(() => Math.random() - 0.5);
+    for (const d of shuffled) {
+      const next = add(enemy.cell, DIRS[d]);
+      if (this.canEnemyOccupy(next, enemy) && !inDanger(next)) return d;
+    }
+    // last resort: any occupiable cell, even risky, so we never freeze
     for (const d of shuffled) {
       if (this.canEnemyOccupy(add(enemy.cell, DIRS[d]), enemy)) return d;
     }
     return null;
+  }
+
+  // Union of every active bomb's blast footprint (wall/brick-aware), as "x,y" keys.
+  private blastDangerSet(): Set<string> {
+    const danger = new Set<string>();
+    for (const b of this.bombs) {
+      for (const c of this.computeBlastCells(b.cell, b.range)) danger.add(`${c.x},${c.y}`);
+    }
+    return danger;
+  }
+
+  // BFS to the nearest cell NOT in any blast zone; returns the first step toward it.
+  // Explores through danger cells so it can route the enemy out of a corridor.
+  private bfsFleeStep(enemy: Enemy, danger: Set<string>): Direction | null {
+    const canPhase = this.hasActiveBuff(enemy, "phaseWalk");
+    const walkable = (cell: Vec2): boolean => {
+      if (cell.x < 0 || cell.y < 0 || cell.x >= this.width || cell.y >= this.height) return false;
+      const tile = this.tiles[cell.y][cell.x];
+      if (tile === "wall") return false;
+      if (tile === "brick" && !canPhase) return false;
+      if (this.bombs.some((b) => sameCell(b.cell, cell))) return false;
+      return true;
+    };
+
+    const startKey = `${enemy.cell.x},${enemy.cell.y}`;
+    const firstStep = new Map<string, Direction>();
+    const visited = new Set<string>([startKey]);
+    const queue: Vec2[] = [{ ...enemy.cell }];
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      const curKey = `${cur.x},${cur.y}`;
+      if (curKey !== startKey && !danger.has(curKey)) return firstStep.get(curKey)!;
+      for (const dir of DIRECTIONS) {
+        const next = add(cur, DIRS[dir]);
+        const key = `${next.x},${next.y}`;
+        if (visited.has(key) || !walkable(next)) continue;
+        visited.add(key);
+        firstStep.set(key, curKey === startKey ? dir : firstStep.get(curKey)!);
+        queue.push(next);
+      }
+    }
+    return null; // no safe cell reachable — trapped
   }
 
   private playerCellKeys(): Set<string> {
@@ -495,46 +571,20 @@ export class GameModel {
     return none; // player unreachable even through bricks
   }
 
-  private getFleeFromBombsDirection(enemy: Enemy): Direction | null {
-    let bestDir: Direction | null = null;
-    let bestScore = -Infinity;
-
-    for (const dir of DIRECTIONS) {
-      const next = add(enemy.cell, DIRS[dir]);
-      if (!this.canEnemyOccupy(next)) continue;
-
-      const nextInBlast = this.bombs.some((b) => {
-        const dx = Math.abs(b.cell.x - next.x);
-        const dy = Math.abs(b.cell.y - next.y);
-        return (dx === 0 && dy <= b.range) || (dy === 0 && dx <= b.range);
-      });
-
-      // Heavily penalise moving into another blast zone; otherwise prefer maximum distance
-      const score = nextInBlast
-        ? -1000
-        : this.bombs.reduce((sum, b) => sum + manhattan(next, b.cell), 0);
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestDir = dir;
-      }
-    }
-
-    return bestDir;
-  }
 
   private tryEnemyPlantBomb(enemy: Enemy, now: number): void {
     const alivePlayers = this.players.filter((p) => p.alive);
-    const otherEnemies = this.enemies.filter((e) => e.id !== enemy.id);
 
-    // Bomb when any target (player or enemy) is orthogonally aligned within blast range
-    const hasAlignedTarget = [...alivePlayers.map((p) => p.cell), ...otherEnemies.map((e) => e.cell)]
-      .some((cell) => {
-        const dx = Math.abs(cell.x - enemy.cell.x);
-        const dy = Math.abs(cell.y - enemy.cell.y);
-        return (dx === 0 && dy > 0 && dy <= enemy.bombRange) ||
-               (dy === 0 && dx > 0 && dx <= enemy.bombRange);
-      });
+    // megaBlast buff: +3 range for the next 2 bombs, just like a player
+    const mega = enemy.activeBuffs.find((b) => b.type === "megaBlast" && b.usesLeft > 0);
+    const range = mega ? enemy.bombRange + 3 : enemy.bombRange;
+    const plannedBlast = this.computeBlastCells(enemy.cell, range);
+    const plannedBlastHits = (cell: Vec2): boolean => plannedBlast.some((c) => sameCell(c, cell));
+
+    // Bomb when a player is actually inside the wall/brick-aware blast footprint.
+    // Other NPCs are intentionally ignored as targets so enemies spend bombs
+    // hunting humans, not each other.
+    const hasAlignedTarget = alivePlayers.some((p) => plannedBlastHits(p.cell));
 
     // Also bomb aggressively when a player is immediately adjacent
     const playerAdjacent = alivePlayers.some((p) => manhattan(enemy.cell, p.cell) === 1);
@@ -563,9 +613,12 @@ export class GameModel {
     }
     if (this.bombs.some((b) => sameCell(b.cell, enemy.cell))) return;
 
-    // megaBlast buff: +3 range for the next 2 bombs, just like a player
-    const mega = enemy.activeBuffs.find((b) => b.type === "megaBlast" && b.usesLeft > 0);
-    const range = mega ? enemy.bombRange + 3 : enemy.bombRange;
+    // Do not spend bombs in a way that wipes out another NPC; the enemy squad
+    // should pressure the humans instead of thinning itself.
+    if (this.enemies.some((e) => e.id !== enemy.id && plannedBlastHits(e.cell))) {
+      enemy.nextBombAt = now + 700;
+      return;
+    }
 
     // Self-preservation: never plant a bomb the enemy can't retreat from
     if (!this.canEscapeAfterBomb(enemy, range)) {
@@ -583,7 +636,9 @@ export class GameModel {
       cell: { ...enemy.cell },
       owner: "enemy",
       ownerEnemyId: enemy.id,
-      ownerCharacter: "enemy",
+      // Tag with the NPC's character so its perk applies (e.g. Viper = antichain).
+      // Scoring still keys off `owner: "enemy"`, so this doesn't grant points.
+      ownerCharacter: enemy.character,
       range,
       plantedAt: now,
       explodesAt: now + 2200
@@ -603,7 +658,13 @@ export class GameModel {
       for (const c of this.computeBlastCells(b.cell, b.range)) blast.add(`${c.x},${c.y}`);
     }
 
-    const maxDepth = range + 2;
+    // Only count an escape as real if the enemy can physically reach a safe cell
+    // before the 2200ms fuse fires, given its current step cadence. This is the
+    // key fix for slow enemies blowing themselves up.
+    const effSpeed = this.hasActiveBuff(enemy, "speedSurge") ? 4 : enemy.speed;
+    const stepMs = Math.max(160, DIFFICULTIES[this.difficulty].enemyStepMs - effSpeed * 55);
+    const reachableSteps = Math.floor((2200 * 0.8) / stepMs);
+    const maxDepth = Math.max(1, Math.min(range + 2, reachableSteps));
     const visited = new Set<string>([`${enemy.cell.x},${enemy.cell.y}`]);
     let frontier: Vec2[] = [{ ...enemy.cell }];
     for (let depth = 0; depth < maxDepth; depth += 1) {
