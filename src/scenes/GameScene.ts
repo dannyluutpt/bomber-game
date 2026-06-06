@@ -3,6 +3,7 @@ import { CHARACTERS, DIFFICULTIES, GameModel } from "../simulation/GameModel";
 import { LEVEL_HEIGHT, LEVEL_WIDTH } from "../simulation/level";
 import { NetClient, type NetMessage, type NetRole } from "../net/NetClient";
 import { THEMES, type MapTheme } from "../render/themes";
+import { Renderer3D } from "../render3d/Renderer3D";
 import type {
   BuffType,
   CharacterId,
@@ -66,6 +67,7 @@ export class GameScene extends Phaser.Scene {
   private backingGraphics?: Phaser.GameObjects.Graphics;
   private chromeGraphics?: Phaser.GameObjects.Graphics;
   private stars?: { x: number; y: number; r: number; a: number }[];
+  private r3d?: Renderer3D;
   private boundDomKeydown = (e: KeyboardEvent) => this.handleDomKeydown(e);
 
   // --- Online multiplayer (host-authoritative over PeerJS) ---
@@ -160,12 +162,17 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.refreshLayout();
-    this.cameras.main.setBackgroundColor("#050914");
-    this.createBackground();
-    this.createBoardBacking();
+    // Phaser canvas stays transparent; the Three.js renderer behind it draws the game.
+    this.cameras.main.setBackgroundColor("rgba(0,0,0,0)");
+    try {
+      this.r3d = new Renderer3D(document.getElementById("game-root")!);
+    } catch (err) {
+      // No WebGL / 3D init failed — keep the game playable (menus, logic) without 3D.
+      console.error("3D renderer init failed:", err);
+      this.r3d = undefined;
+    }
     this.board = this.add.container(this.BOARD_X, this.BOARD_Y);
     this.lastBrickCount = -1;
-    this.createChrome();
 
     // --- persistent render pool: created once, reused every frame ---
     // Layer order in container: tiles (bottom) → dynamic vector → enemy sprites → player sprites → labels (top)
@@ -201,8 +208,10 @@ export class GameScene extends Phaser.Scene {
       requestAnimationFrame(() => {
         this.refreshLayout();
         this.redrawStaticLayers();
+        this.r3d?.resize();
       });
     });
+    window.addEventListener("resize", () => this.r3d?.resize());
 
     this.bindMenu();
     this.bindTouchControls();
@@ -368,7 +377,7 @@ export class GameScene extends Phaser.Scene {
   private startGame(): void {
     this.lastBrickCount = -1;
     this.renderPos.clear();
-    this.redrawStaticLayers(); // paint background/board in the chosen theme
+    this.r3d?.reset();
     this.model.start({
       difficulty: this.selectedDifficulty,
       characters: [...this.selectedCharacters],
@@ -389,7 +398,7 @@ export class GameScene extends Phaser.Scene {
     if (this.netRole === "joiner") { this.net?.send({ t: "restart" }); return; }
     this.lastBrickCount = -1;
     this.renderPos.clear();
-    this.redrawStaticLayers();
+    this.r3d?.reset();
     this.model.start({
       difficulty: this.selectedDifficulty,
       characters: [...this.selectedCharacters],
@@ -544,89 +553,20 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private createBackground(): void {
-    const w = this.scale.width;
-    const h = this.scale.height;
-    const th = this.theme;
-    if (!this.bgGraphics) this.bgGraphics = this.add.graphics();
-    else this.bgGraphics.clear();
-    const g = this.bgGraphics;
-
-    // Vertical space gradient (top → bottom) sets the theme's overall mood.
-    g.fillGradientStyle(th.bgTop, th.bgTop, th.bgBottom, th.bgBottom, 1);
-    g.fillRect(0, 0, w, h);
-
-    // Soft nebula glows — translucent ellipses fake a coloured cloud cheaply.
-    g.fillStyle(th.nebula, 0.1);
-    g.fillEllipse(w * 0.28, h * 0.32, w * 0.6, h * 0.55);
-    g.fillStyle(th.nebula, 0.08);
-    g.fillEllipse(w * 0.76, h * 0.72, w * 0.55, h * 0.5);
-
-    // Starfield (positions stored in normalised coords so they stay put on resize).
-    if (!this.stars) this.stars = Array.from({ length: 90 }, () => ({
-      x: Math.random(), y: Math.random(),
-      r: Math.random() < 0.2 ? 1.8 : 1, a: 0.35 + Math.random() * 0.5
-    }));
-    for (const s of this.stars) {
-      g.fillStyle(th.star, s.a);
-      g.fillCircle(s.x * w, s.y * h, s.r);
-    }
-  }
-
-  private createBoardBacking(): void {
-    const t = this.TILE;
-    const bx = this.BOARD_X;
-    const by = this.BOARD_Y;
-    const bw = LEVEL_WIDTH * t;
-    const bh = LEVEL_HEIGHT * t;
-    const th = this.theme;
-    if (!this.backingGraphics) this.backingGraphics = this.add.graphics();
-    else this.backingGraphics.clear();
-    this.backingGraphics.fillStyle(0x000000, 0.45);
-    this.backingGraphics.fillRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 6);
-    this.backingGraphics.lineStyle(1, th.accentSoft, 0.28);
-    this.backingGraphics.strokeRoundedRect(bx - 14, by - 14, bw + 28, bh + 28, 6);
-  }
-
-  private createChrome(): void {
-    const t = this.TILE;
-    const bx = this.BOARD_X;
-    const by = this.BOARD_Y;
-    const bw = LEVEL_WIDTH * t;
-    const bh = LEVEL_HEIGHT * t;
-    const th = this.theme;
-    if (!this.chromeGraphics) this.chromeGraphics = this.add.graphics();
-    else this.chromeGraphics.clear();
-    this.chromeGraphics.lineStyle(3, th.accent, 0.9);
-    this.chromeGraphics.strokeRoundedRect(bx - 8, by - 8, bw + 16, bh + 16, 6);
-    this.chromeGraphics.lineStyle(1, th.accentSoft, 0.5);
-    this.chromeGraphics.strokeRoundedRect(bx - 2, by - 2, bw + 4, bh + 4, 3);
-  }
+  // 2D board visuals are disabled — the Three.js renderer (Renderer3D) draws the
+  // background, board and entities. These remain as no-ops so existing call sites
+  // (create/resize/redrawStaticLayers) stay valid.
+  private createBackground(): void { /* handled by Renderer3D */ }
+  private createBoardBacking(): void { /* handled by Renderer3D */ }
+  private createChrome(): void { /* handled by Renderer3D */ }
 
   private render(snapshot: GameSnapshot): void {
-    const t = this.TILE;
-    this.board.setPosition(this.BOARD_X, this.BOARD_Y);
-
-    // tiles: only redraw when a brick is destroyed (count changes).
-    // Count with a plain loop to avoid allocating a flattened array every frame.
-    let brickCount = 0;
-    for (const row of snapshot.tiles) {
-      for (const cell of row) if (cell === "brick") brickCount += 1;
+    // 3D path: feed the snapshot to the Three.js renderer. The legacy 2D Phaser
+    // drawing is disabled (Phaser now only runs logic/input/net/menus).
+    if (this.r3d) {
+      this.r3d.setTheme(this.theme);
+      this.r3d.frame(snapshot, this.frameDelta);
     }
-    if (brickCount !== this.lastBrickCount) {
-      this.lastBrickCount = brickCount;
-      this.drawTiles(snapshot, t);
-    }
-
-    // dynamic elements: clear once, draw all into gDynamic
-    this.gDynamic.clear();
-    this.drawPowerUps(snapshot, t);
-    this.drawGems(snapshot, t);
-    this.drawBombs(snapshot, t);
-    this.drawExplosions(snapshot, t);
-
-    this.drawEnemies(snapshot, t);
-    snapshot.players.forEach((p) => this.drawPlayer(snapshot, p, t));
 
     if (snapshot.phase !== this.lastPhase) {
       if (snapshot.phase === "won") {
@@ -1048,7 +988,7 @@ export class GameScene extends Phaser.Scene {
     this.remoteDir = null;
     this.remoteBombQueued = false;
     this.snapAccumMs = 0;
-    this.redrawStaticLayers(); // repaint background/board in the chosen theme
+    this.r3d?.reset();
     if (this.hud.p2strip) this.hud.p2strip.style.display = "";
   }
 

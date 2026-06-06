@@ -5,7 +5,8 @@ import "./styles.css";
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: "game-root",
-  backgroundColor: "#050914",
+  transparent: true, // Phaser only runs logic now; Three.js (behind) renders the game
+  backgroundColor: "rgba(0,0,0,0)",
   scale: {
     mode: Phaser.Scale.RESIZE,
     width: window.innerWidth,
