@@ -4,7 +4,20 @@ import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js
 import { CHARACTERS } from "../simulation/GameModel";
 import { LEVEL_HEIGHT, LEVEL_WIDTH } from "../simulation/level";
 import type { MapTheme } from "../render/themes";
-import type { CharacterId, GameSnapshot, Vec2 } from "../simulation/types";
+import type { CharacterId, GameSnapshot, MapThemeId, Vec2 } from "../simulation/types";
+
+// Distinct 3D block colours per theme — picked for strong value contrast so the
+// indestructible walls (darker) read clearly apart from destructible bricks (bright).
+const BLOCK_3D: Record<MapThemeId, { wall: number; brick: number }> = {
+  space: { wall: 0x4a5666, brick: 0xd98a3c },       // dark slate vs warm wood/orange
+  ice: { wall: 0x3f6088, brick: 0xe6f3ff },          // deep steel-blue vs bright ice
+  industrial: { wall: 0x2b3850, brick: 0xc85a36 }    // dark navy steel vs rust orange
+};
+
+// Per-character yaw offset for models whose "forward" axis isn't +Z.
+const CHAR_YAW: Partial<Record<CharacterId, number>> = {
+  titan: Math.PI // SWAT model faces -Z; flip it
+};
 
 const TILE = 1;
 const FLOOR_Y = -TILE * 0.45; // top surface of the floor / where actors stand
@@ -178,10 +191,10 @@ export class Renderer3D {
     this.theme = theme;
     this.scene.background = new THREE.Color(theme.bgBottom);
     this.scene.fog = new THREE.Fog(theme.bgBottom, 30, 60);
-    // Indestructible walls = darker base; destructible bricks = brighter top tone,
-    // so the two are clearly distinguishable on the board.
-    this.wallMat.color.setHex(theme.wall);
-    this.brickMat.color.setHex(theme.brickTop);
+    // High-contrast 3D block colours (walls dark, bricks bright) so destructible vs
+    // indestructible is obvious even under flat 3D lighting.
+    this.wallMat.color.setHex(BLOCK_3D[theme.id].wall);
+    this.brickMat.color.setHex(BLOCK_3D[theme.id].brick);
     this.floorMat.color.setHex(theme.floor);
     this.hemi.color.setHex(theme.star);
     this.hemi.groundColor.setHex(theme.floor);
@@ -314,10 +327,12 @@ export class Renderer3D {
       if (!alive) return;
       seen.add(key);
       const baseY = this.actorTemplates.has(charId) ? FLOOR_Y : TILE * 0.35;
+      const yaw = CHAR_YAW[charId] ?? 0; // correct models whose forward axis isn't +Z
       let mesh = this.actors.get(key);
       if (!mesh) {
         mesh = this.makeActor(key, charId);
         mesh.position.set(worldX(cell.x), baseY, worldZ(cell.y));
+        mesh.rotation.y = yaw; // face the camera while idle
         this.root.add(mesh);
         this.actors.set(key, mesh);
       }
@@ -331,7 +346,7 @@ export class Renderer3D {
         const f = 1 - Math.exp(-16 * (dtMs / 1000));
         mesh.position.x += dx * f;
         mesh.position.z += dz * f;
-        if (Math.abs(dx) + Math.abs(dz) > 0.012) mesh.rotation.y = Math.atan2(dx, dz); // face travel
+        if (Math.abs(dx) + Math.abs(dz) > 0.012) mesh.rotation.y = Math.atan2(dx, dz) + yaw; // face travel
       }
       // Crossfade idle <-> walk based on whether the actor is still travelling.
       const anim = this.actorAnims.get(key);
