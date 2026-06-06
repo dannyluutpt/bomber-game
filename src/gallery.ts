@@ -125,10 +125,12 @@ addEventListener("resize", () => {
   labelRenderer.setSize(innerWidth, innerHeight);
 });
 
-const clock = new THREE.Clock();
+let lastT = performance.now();
 function animate(): void {
   requestAnimationFrame(animate);
-  const dt = clock.getDelta();
+  const now = performance.now();
+  const dt = Math.min((now - lastT) / 1000, 0.1);
+  lastT = now;
   for (const s of spinners) s.rotation.y += dt * 0.6;
   for (const mx of mixers) mx.update(dt);
   controls.update();

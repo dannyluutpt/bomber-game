@@ -4,7 +4,7 @@ import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js
 import { CHARACTERS } from "../simulation/GameModel";
 import { LEVEL_HEIGHT, LEVEL_WIDTH } from "../simulation/level";
 import type { MapTheme } from "../render/themes";
-import type { GameSnapshot, Vec2 } from "../simulation/types";
+import type { CharacterId, GameSnapshot, Vec2 } from "../simulation/types";
 
 const TILE = 1;
 const FLOOR_Y = -TILE * 0.45; // top surface of the floor / where actors stand
@@ -52,7 +52,9 @@ export class Renderer3D {
   private bombs = new Map<number, THREE.Mesh>();
   private actors = new Map<string, THREE.Object3D>(); // players "p0"/"p1", enemies "e<id>"
   private actorTargets = new Map<string, Vec2>();
-  private actorTemplate: THREE.Object3D | null = null; // loaded CC0 character model
+  // One CC0 model template per character id (+ its animation clips).
+  private actorTemplates = new Map<CharacterId, { object: THREE.Object3D; animations: THREE.AnimationClip[] }>();
+  private actorMixers = new Map<string, THREE.AnimationMixer>(); // per-actor idle animation
   private powerUps = new Map<number, THREE.Mesh>();
   private gems = new Map<number, THREE.Mesh>();
   private flames: THREE.Mesh[] = [];
@@ -82,32 +84,45 @@ export class Renderer3D {
     this.setupLights();
     this.setupFloor();
     this.resize();
-    this.loadActorModel();
+    this.loadActorModels();
   }
 
-  // Load the CC0 character model (three.js RobotExpressive). Cached as a template
-  // that is cloned + tinted per actor. Async — actors fall back to capsules until ready.
   private hemi!: THREE.HemisphereLight;
-  private loadActorModel(): void {
-    const url = `${import.meta.env.BASE_URL}assets/models/RobotExpressive.glb`;
-    new GLTFLoader().load(url, (gltf) => {
-      const model = gltf.scene;
-      // Normalise: scale to ~0.9 tile tall, centre on X/Z, drop feet to local y=0.
-      const box = new THREE.Box3().setFromObject(model);
-      const size = new THREE.Vector3(); box.getSize(size);
-      model.scale.setScalar((TILE * 0.92) / (size.y || 1));
-      const box2 = new THREE.Box3().setFromObject(model);
-      const ctr = new THREE.Vector3(); box2.getCenter(ctr);
-      model.position.x -= ctr.x;
-      model.position.z -= ctr.z;
-      model.position.y -= box2.min.y;
-      const wrapper = new THREE.Group();
-      wrapper.add(model);
-      this.actorTemplate = wrapper;
-      // existing capsule actors will be rebuilt as models on the next frame
-      for (const m of this.actors.values()) { this.root.remove(m); this.disposeObject(m); }
-      this.actors.clear(); this.actorTargets.clear();
-    }, undefined, () => { /* load failed — keep capsule fallback */ });
+
+  // Load one CC0 character model per game character (assets/models/<id>.glb). Each
+  // is normalised + cached as a template that is cloned per actor (native materials).
+  // Async — actors fall back to a tinted capsule until their model arrives.
+  private loadActorModels(): void {
+    const loader = new GLTFLoader();
+    (Object.keys(CHARACTERS) as CharacterId[]).forEach((id) => {
+      const url = `${import.meta.env.BASE_URL}assets/models/${id}.glb`;
+      loader.load(url, (gltf) => {
+        this.actorTemplates.set(id, { object: this.normalizeModel(gltf.scene), animations: gltf.animations });
+        // existing capsule/old actors rebuild as models on the next frame
+        this.rebuildActors();
+      }, undefined, () => { /* missing model — keep capsule fallback for this id */ });
+    });
+  }
+
+  // Scale a model to ~tile height, centre it on X/Z and drop its feet to local y=0,
+  // wrapped in a group so cloning + absolute placement stays correct.
+  private normalizeModel(model: THREE.Object3D): THREE.Object3D {
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3(); box.getSize(size);
+    model.scale.setScalar((TILE * 0.92) / (size.y || 1));
+    const box2 = new THREE.Box3().setFromObject(model);
+    const ctr = new THREE.Vector3(); box2.getCenter(ctr);
+    model.position.x -= ctr.x;
+    model.position.z -= ctr.z;
+    model.position.y -= box2.min.y;
+    const wrapper = new THREE.Group();
+    wrapper.add(model);
+    return wrapper;
+  }
+
+  private rebuildActors(): void {
+    for (const [key, m] of this.actors) { this.root.remove(m); this.disposeObject(m); this.actorMixers.delete(key); }
+    this.actors.clear(); this.actorTargets.clear();
   }
 
   private positionCamera(): void {
@@ -178,6 +193,7 @@ export class Renderer3D {
     this.syncGems(snapshot);
     this.syncFlames(snapshot);
     this.syncActors(snapshot, dtMs);
+    for (const mx of this.actorMixers.values()) mx.update(dtMs / 1000); // idle animations
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -283,13 +299,13 @@ export class Renderer3D {
 
   private syncActors(s: GameSnapshot, dtMs: number): void {
     const seen = new Set<string>();
-    const baseY = this.actorTemplate ? FLOOR_Y : TILE * 0.35;
-    const place = (key: string, cell: Vec2, color: number, alive: boolean): void => {
+    const place = (key: string, cell: Vec2, charId: CharacterId, alive: boolean): void => {
       if (!alive) return;
       seen.add(key);
+      const baseY = this.actorTemplates.has(charId) ? FLOOR_Y : TILE * 0.35;
       let mesh = this.actors.get(key);
       if (!mesh) {
-        mesh = this.makeActor(color);
+        mesh = this.makeActor(key, charId);
         mesh.position.set(worldX(cell.x), baseY, worldZ(cell.y));
         this.root.add(mesh);
         this.actors.set(key, mesh);
@@ -307,37 +323,35 @@ export class Renderer3D {
       }
     };
 
-    for (const p of s.players) {
-      place(`p${p.index}`, p.cell, CHARACTERS[p.character].color, p.alive);
-    }
-    for (const e of s.enemies) {
-      place(`e${e.id}`, e.cell, CHARACTERS[e.character].color, true);
-    }
+    for (const p of s.players) place(`p${p.index}`, p.cell, p.character, p.alive);
+    for (const e of s.enemies) place(`e${e.id}`, e.cell, e.character, true);
     for (const [key, mesh] of this.actors) {
-      if (!seen.has(key)) { this.root.remove(mesh); this.disposeObject(mesh); this.actors.delete(key); this.actorTargets.delete(key); }
+      if (!seen.has(key)) {
+        this.root.remove(mesh); this.disposeObject(mesh);
+        this.actors.delete(key); this.actorTargets.delete(key); this.actorMixers.delete(key);
+      }
     }
   }
 
-  // Build one actor: a tinted clone of the CC0 character model, or a capsule
-  // fallback while the model is still loading.
-  private makeActor(color: number): THREE.Object3D {
-    if (this.actorTemplate) {
-      const obj = cloneSkinned(this.actorTemplate);
+  // Build one actor: a clone of that character's CC0 model (native materials, with
+  // its idle animation playing), or a colour-tinted capsule until the model loads.
+  private makeActor(key: string, charId: CharacterId): THREE.Object3D {
+    const tmpl = this.actorTemplates.get(charId);
+    if (tmpl) {
+      const obj = cloneSkinned(tmpl.object);
       obj.traverse((o) => {
         const mesh = o as THREE.Mesh;
-        if (!(mesh as unknown as { isMesh?: boolean }).isMesh) return;
-        mesh.castShadow = true;
-        const tint = (mat: THREE.Material): THREE.Material => {
-          const sm = mat.clone() as THREE.MeshStandardMaterial;
-          sm.color?.setHex(color);
-          if (sm.emissive) { sm.emissive.setHex(color); sm.emissiveIntensity = 0.18; }
-          return sm;
-        };
-        mesh.material = Array.isArray(mesh.material) ? mesh.material.map(tint) : tint(mesh.material);
+        if ((mesh as unknown as { isMesh?: boolean }).isMesh) mesh.castShadow = true;
       });
+      if (tmpl.animations.length) {
+        const mixer = new THREE.AnimationMixer(obj);
+        const idle = tmpl.animations.find((c) => /idle/i.test(c.name)) ?? tmpl.animations[0];
+        mixer.clipAction(idle).play();
+        this.actorMixers.set(key, mixer);
+      }
       return obj;
     }
-    const mesh = new THREE.Mesh(this.bodyGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.15 }));
+    const mesh = new THREE.Mesh(this.bodyGeo, new THREE.MeshStandardMaterial({ color: CHARACTERS[charId].color, roughness: 0.5, metalness: 0.15 }));
     mesh.castShadow = true;
     return mesh;
   }
@@ -359,7 +373,7 @@ export class Renderer3D {
     for (const m of this.bombs.values()) this.root.remove(m);
     this.bombs.clear();
     for (const m of this.actors.values()) { this.root.remove(m); this.disposeObject(m); }
-    this.actors.clear(); this.actorTargets.clear();
+    this.actors.clear(); this.actorTargets.clear(); this.actorMixers.clear();
     for (const m of this.powerUps.values()) { this.root.remove(m); this.disposeMesh(m); }
     this.powerUps.clear();
     for (const m of this.gems.values()) { this.root.remove(m); this.disposeMesh(m); }
