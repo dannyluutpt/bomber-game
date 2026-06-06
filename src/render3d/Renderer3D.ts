@@ -4,7 +4,7 @@ import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js
 import { CHARACTERS } from "../simulation/GameModel";
 import { LEVEL_HEIGHT, LEVEL_WIDTH } from "../simulation/level";
 import type { MapTheme } from "../render/themes";
-import type { CharacterId, GameSnapshot, MapThemeId, Vec2 } from "../simulation/types";
+import type { Bomb, CharacterId, GameSnapshot, MapThemeId, Vec2 } from "../simulation/types";
 
 // Distinct 3D block colours per theme — picked for strong value contrast so the
 // indestructible walls (darker) read clearly apart from destructible bricks (bright).
@@ -14,8 +14,9 @@ const BLOCK_3D: Record<MapThemeId, { wall: number; brick: number }> = {
   industrial: { wall: 0x2b3850, brick: 0xc85a36 }    // dark navy steel vs rust orange
 };
 
-// Per-character yaw offset for models whose "forward" axis isn't +Z.
-const CHAR_YAW: Partial<Record<CharacterId, number>> = {
+// Per-character yaw offset for models whose "forward" axis isn't +Z. Shared by the
+// in-game renderer and the menu avatar renderer so a fix applies to both.
+export const CHAR_YAW: Partial<Record<CharacterId, number>> = {
   titan: Math.PI // SWAT model faces -Z; flip it
 };
 
@@ -63,6 +64,13 @@ export class Renderer3D {
   private bodyGeo = new THREE.CapsuleGeometry(TILE * 0.28, TILE * 0.32, 4, 10);
   private gemGeo = new THREE.OctahedronGeometry(TILE * 0.26);
   private puGeo = new THREE.BoxGeometry(TILE * 0.45, TILE * 0.45, TILE * 0.45);
+  private ringGeo = new THREE.TorusGeometry(TILE * 0.42, TILE * 0.05, 8, 28);
+  private fuseGeo = new THREE.CylinderGeometry(TILE * 0.035, TILE * 0.035, TILE * 0.22, 6);
+  private sparkGeo = new THREE.SphereGeometry(TILE * 0.06, 8, 6);
+
+  private decor = new THREE.Group();               // themed environment props
+  private prevBombIds = new Set<number>();          // detect newly planted bombs
+  private actorSquash = new Map<string, number>();  // actor key -> squash start time (ms)
 
   // Per-theme materials (recoloured on setTheme)
   private wallMat = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0.1 });
@@ -73,7 +81,7 @@ export class Renderer3D {
 
   // Pools keyed for diffing
   private blocks = new Map<string, { mesh: THREE.Mesh; type: "wall" | "brick" }>();
-  private bombs = new Map<number, THREE.Mesh>();
+  private bombs = new Map<number, THREE.Object3D>();
   private actors = new Map<string, THREE.Object3D>(); // players "p0"/"p1", enemies "e<id>"
   private actorTargets = new Map<string, Vec2>();
   // One CC0 model template per character id (+ its animation clips).
@@ -105,6 +113,7 @@ export class Renderer3D {
     this.positionCamera();
 
     this.scene.add(this.root);
+    this.scene.add(this.decor);
     this.setupLights();
     this.setupFloor();
     this.resize();
@@ -198,6 +207,47 @@ export class Renderer3D {
     this.floorMat.color.setHex(theme.floor);
     this.hemi.color.setHex(theme.star);
     this.hemi.groundColor.setHex(theme.floor);
+    this.buildEnvironment(theme);
+  }
+
+  // Themed environment: a glowing border rim around the board + corner posts.
+  private buildEnvironment(theme: MapTheme): void {
+    for (const c of [...this.decor.children]) {
+      this.decor.remove(c);
+      const m = c as THREE.Mesh;
+      m.geometry?.dispose?.();
+      const mat = m.material;
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose()); else mat?.dispose?.();
+    }
+
+    const bw = LEVEL_WIDTH * TILE, bh = LEVEL_HEIGHT * TILE;
+    const t = 0.32, h = 0.28;
+    const halfW = bw / 2 + t / 2, halfH = bh / 2 + t / 2;
+    const yTop = FLOOR_Y + h / 2;
+    const rimMat = new THREE.MeshStandardMaterial({
+      color: theme.accent, emissive: theme.accent, emissiveIntensity: 0.3, roughness: 0.5
+    });
+    const bar = (w: number, d: number, x: number, z: number): void => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), rimMat);
+      m.position.set(x, yTop, z);
+      m.receiveShadow = true;
+      this.decor.add(m);
+    };
+    bar(bw + t * 2, t, 0, -halfH);
+    bar(bw + t * 2, t, 0, halfH);
+    bar(t, bh, -halfW, 0);
+    bar(t, bh, halfW, 0);
+
+    const postMat = new THREE.MeshStandardMaterial({
+      color: theme.accentSoft, emissive: theme.accentSoft, emissiveIntensity: 0.45, roughness: 0.4
+    });
+    const postGeo = new THREE.CylinderGeometry(0.16, 0.22, 0.8, 12);
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+      const p = new THREE.Mesh(postGeo, postMat);
+      p.position.set(sx * halfW, FLOOR_Y + 0.4, sz * halfH);
+      p.castShadow = true;
+      this.decor.add(p);
+    }
   }
 
   resize(): void {
@@ -251,19 +301,47 @@ export class Renderer3D {
     const pulse = 1 + Math.sin(performance.now() / 110) * 0.08;
     for (const bomb of s.bombs) {
       seen.add(bomb.id);
-      let mesh = this.bombs.get(bomb.id);
-      if (!mesh) {
-        mesh = new THREE.Mesh(this.bombGeo, this.bombMat);
-        mesh.castShadow = true;
-        this.root.add(mesh);
-        this.bombs.set(bomb.id, mesh);
+      let obj = this.bombs.get(bomb.id);
+      if (!obj) {
+        obj = this.makeBomb();
+        this.root.add(obj);
+        this.bombs.set(bomb.id, obj);
+        if (!this.prevBombIds.has(bomb.id)) this.triggerPlant(bomb); // newly planted → squash owner
       }
-      mesh.position.set(worldX(bomb.cell.x), BOMB_Y, worldZ(bomb.cell.y));
-      mesh.scale.setScalar(pulse);
+      obj.position.set(worldX(bomb.cell.x), BOMB_Y, worldZ(bomb.cell.y));
+      obj.scale.setScalar(pulse);
     }
-    for (const [id, mesh] of this.bombs) {
-      if (!seen.has(id)) { this.root.remove(mesh); this.bombs.delete(id); }
+    for (const [id, obj] of this.bombs) {
+      if (!seen.has(id)) { this.root.remove(obj); this.bombs.delete(id); }
     }
+    this.prevBombIds = seen;
+  }
+
+  // A classic bomb: dark body + tilted fuse + glowing spark.
+  private makeBomb(): THREE.Object3D {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(this.bombGeo, this.bombMat);
+    body.castShadow = true;
+    g.add(body);
+    const fuse = new THREE.Mesh(this.fuseGeo, this.bombMat);
+    fuse.position.set(0.06, TILE * 0.34, 0);
+    fuse.rotation.z = -0.45;
+    g.add(fuse);
+    const spark = new THREE.Mesh(this.sparkGeo, new THREE.MeshStandardMaterial({
+      color: 0xfff2a8, emissive: 0xffb020, emissiveIntensity: 2.2
+    }));
+    spark.position.set(0.13, TILE * 0.46, 0);
+    g.add(spark);
+    return g;
+  }
+
+  // Map a freshly planted bomb to its owner actor and trigger a quick squash.
+  private triggerPlant(bomb: Bomb): void {
+    let key: string | null = null;
+    if (bomb.owner === "player0") key = "p0";
+    else if (bomb.owner === "player1") key = "p1";
+    else if (bomb.ownerEnemyId != null) key = `e${bomb.ownerEnemyId}`;
+    if (key && this.actors.has(key)) this.actorSquash.set(key, performance.now());
   }
 
   private syncFlames(s: GameSnapshot): void {
@@ -358,6 +436,13 @@ export class Renderer3D {
           anim.current = want;
         }
       }
+      // Quick squash when this actor just planted a bomb.
+      const sq = this.actorSquash.get(key);
+      if (sq !== undefined) {
+        const p = (performance.now() - sq) / 220;
+        if (p >= 1) { this.actorSquash.delete(key); mesh.scale.setScalar(1); }
+        else { const sy = 1 - Math.sin(p * Math.PI) * 0.16; mesh.scale.set(1 + (1 - sy) * 0.4, sy, 1 + (1 - sy) * 0.4); }
+      }
     };
 
     for (const p of s.players) place(`p${p.index}`, p.cell, p.character, p.alive);
@@ -365,7 +450,8 @@ export class Renderer3D {
     for (const [key, mesh] of this.actors) {
       if (!seen.has(key)) {
         this.root.remove(mesh); this.disposeObject(mesh);
-        this.actors.delete(key); this.actorTargets.delete(key); this.actorAnims.delete(key);
+        this.actors.delete(key); this.actorTargets.delete(key);
+        this.actorAnims.delete(key); this.actorSquash.delete(key);
       }
     }
   }
@@ -390,20 +476,37 @@ export class Renderer3D {
         const walk = walkClip ? mixer.clipAction(walkClip) : undefined;
         this.actorAnims.set(key, { mixer, idle, walk, current: idle });
       }
+      this.addRing(obj, key);
       return obj;
     }
-    const mesh = new THREE.Mesh(this.bodyGeo, new THREE.MeshStandardMaterial({ color: CHARACTERS[charId].color, roughness: 0.5, metalness: 0.15 }));
+    const capMat = new THREE.MeshStandardMaterial({ color: CHARACTERS[charId].color, roughness: 0.5, metalness: 0.15 });
+    capMat.userData.owned = true;
+    const mesh = new THREE.Mesh(this.bodyGeo, capMat);
     mesh.castShadow = true;
     return mesh;
   }
 
+  // Coloured ground ring under an actor: P1 pink, P2 cyan, NPCs red.
+  private addRing(obj: THREE.Object3D, key: string): void {
+    const color = key === "p0" ? 0xff4d9d : key === "p1" ? 0x35d9ff : 0xff5a4d;
+    const ringMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7, roughness: 0.4 });
+    ringMat.userData.owned = true; // per-actor material — safe to dispose on removal
+    const ring = new THREE.Mesh(this.ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.03;
+    obj.add(ring);
+  }
+
+  // Only dispose materials this renderer created per-actor (ring, capsule). Model
+  // materials are SHARED across clones of the same character, so disposing them would
+  // break other/future clones — leave those alone.
   private disposeObject(obj: THREE.Object3D): void {
     obj.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!(mesh as unknown as { isMesh?: boolean }).isMesh) return;
       const mat = mesh.material;
-      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-      else mat?.dispose();
+      const list = Array.isArray(mat) ? mat : [mat];
+      for (const m of list) if (m && m.userData.owned) m.dispose();
     });
   }
 
@@ -412,9 +515,9 @@ export class Renderer3D {
     for (const b of this.blocks.values()) this.root.remove(b.mesh);
     this.blocks.clear();
     for (const m of this.bombs.values()) this.root.remove(m);
-    this.bombs.clear();
+    this.bombs.clear(); this.prevBombIds.clear();
     for (const m of this.actors.values()) { this.root.remove(m); this.disposeObject(m); }
-    this.actors.clear(); this.actorTargets.clear(); this.actorAnims.clear();
+    this.actors.clear(); this.actorTargets.clear(); this.actorAnims.clear(); this.actorSquash.clear();
     for (const m of this.powerUps.values()) { this.root.remove(m); this.disposeMesh(m); }
     this.powerUps.clear();
     for (const m of this.gems.values()) { this.root.remove(m); this.disposeMesh(m); }
