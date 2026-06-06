@@ -8,6 +8,14 @@ import type { CharacterId, GameSnapshot, Vec2 } from "../simulation/types";
 
 const TILE = 1;
 const FLOOR_Y = -TILE * 0.45; // top surface of the floor / where actors stand
+
+// Per-actor animation: an idle and (optional) walk clip that crossfade as it moves.
+interface ActorAnim {
+  mixer: THREE.AnimationMixer;
+  idle?: THREE.AnimationAction;
+  walk?: THREE.AnimationAction;
+  current?: THREE.AnimationAction;
+}
 const HALF_W = (LEVEL_WIDTH - 1) / 2;
 const HALF_H = (LEVEL_HEIGHT - 1) / 2;
 
@@ -54,7 +62,7 @@ export class Renderer3D {
   private actorTargets = new Map<string, Vec2>();
   // One CC0 model template per character id (+ its animation clips).
   private actorTemplates = new Map<CharacterId, { object: THREE.Object3D; animations: THREE.AnimationClip[] }>();
-  private actorMixers = new Map<string, THREE.AnimationMixer>(); // per-actor idle animation
+  private actorAnims = new Map<string, ActorAnim>(); // per-actor idle/walk animation state
   private powerUps = new Map<number, THREE.Mesh>();
   private gems = new Map<number, THREE.Mesh>();
   private flames: THREE.Mesh[] = [];
@@ -121,7 +129,7 @@ export class Renderer3D {
   }
 
   private rebuildActors(): void {
-    for (const [key, m] of this.actors) { this.root.remove(m); this.disposeObject(m); this.actorMixers.delete(key); }
+    for (const [key, m] of this.actors) { this.root.remove(m); this.disposeObject(m); this.actorAnims.delete(key); }
     this.actors.clear(); this.actorTargets.clear();
   }
 
@@ -193,7 +201,7 @@ export class Renderer3D {
     this.syncGems(snapshot);
     this.syncFlames(snapshot);
     this.syncActors(snapshot, dtMs);
-    for (const mx of this.actorMixers.values()) mx.update(dtMs / 1000); // idle animations
+    for (const a of this.actorAnims.values()) a.mixer.update(dtMs / 1000); // idle/walk anims
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -313,13 +321,24 @@ export class Renderer3D {
       this.actorTargets.set(key, cell);
       const tx = worldX(cell.x), tz = worldZ(cell.y);
       const dx = tx - mesh.position.x, dz = tz - mesh.position.z;
-      if (Math.hypot(dx, dz) > TILE * 1.6) {
+      const dist = Math.hypot(dx, dz);
+      if (dist > TILE * 1.6) {
         mesh.position.set(tx, baseY, tz); // snap on respawn/teleport
       } else {
         const f = 1 - Math.exp(-16 * (dtMs / 1000));
         mesh.position.x += dx * f;
         mesh.position.z += dz * f;
         if (Math.abs(dx) + Math.abs(dz) > 0.012) mesh.rotation.y = Math.atan2(dx, dz); // face travel
+      }
+      // Crossfade idle <-> walk based on whether the actor is still travelling.
+      const anim = this.actorAnims.get(key);
+      if (anim) {
+        const want = (dist > 0.08 && anim.walk) ? anim.walk : anim.idle;
+        if (want && anim.current !== want) {
+          want.reset().fadeIn(0.18).play();
+          anim.current?.fadeOut(0.18);
+          anim.current = want;
+        }
       }
     };
 
@@ -328,7 +347,7 @@ export class Renderer3D {
     for (const [key, mesh] of this.actors) {
       if (!seen.has(key)) {
         this.root.remove(mesh); this.disposeObject(mesh);
-        this.actors.delete(key); this.actorTargets.delete(key); this.actorMixers.delete(key);
+        this.actors.delete(key); this.actorTargets.delete(key); this.actorAnims.delete(key);
       }
     }
   }
@@ -345,9 +364,13 @@ export class Renderer3D {
       });
       if (tmpl.animations.length) {
         const mixer = new THREE.AnimationMixer(obj);
-        const idle = tmpl.animations.find((c) => /idle/i.test(c.name)) ?? tmpl.animations[0];
-        mixer.clipAction(idle).play();
-        this.actorMixers.set(key, mixer);
+        const find = (re: RegExp) => tmpl.animations.find((c) => re.test(c.name));
+        const idleClip = find(/idle/i) ?? tmpl.animations[0];
+        const walkClip = find(/walk/i) ?? find(/run/i) ?? find(/jog|move/i);
+        const idle = mixer.clipAction(idleClip);
+        idle.play();
+        const walk = walkClip ? mixer.clipAction(walkClip) : undefined;
+        this.actorAnims.set(key, { mixer, idle, walk, current: idle });
       }
       return obj;
     }
@@ -373,7 +396,7 @@ export class Renderer3D {
     for (const m of this.bombs.values()) this.root.remove(m);
     this.bombs.clear();
     for (const m of this.actors.values()) { this.root.remove(m); this.disposeObject(m); }
-    this.actors.clear(); this.actorTargets.clear(); this.actorMixers.clear();
+    this.actors.clear(); this.actorTargets.clear(); this.actorAnims.clear();
     for (const m of this.powerUps.values()) { this.root.remove(m); this.disposeMesh(m); }
     this.powerUps.clear();
     for (const m of this.gems.values()) { this.root.remove(m); this.disposeMesh(m); }
