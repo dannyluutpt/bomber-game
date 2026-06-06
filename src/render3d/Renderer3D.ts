@@ -8,6 +8,8 @@ import type { CharacterId, GameSnapshot, Vec2 } from "../simulation/types";
 
 const TILE = 1;
 const FLOOR_Y = -TILE * 0.45; // top surface of the floor / where actors stand
+const BLOCK_Y = FLOOR_Y + (TILE * 0.78) / 2; // block centre so it rests on the floor
+const BOMB_Y = FLOOR_Y + TILE * 0.3;          // bomb sphere resting on the floor
 
 // Per-actor animation: an idle and (optional) walk clip that crossfade as it moves.
 interface ActorAnim {
@@ -40,8 +42,9 @@ export class Renderer3D {
   private ambient!: THREE.AmbientLight;
   private floor!: THREE.Mesh;
 
-  // Shared geometry (cheap to reuse across many meshes)
-  private blockGeo = new THREE.BoxGeometry(TILE * 0.96, TILE * 0.9, TILE * 0.96);
+  // Shared geometry (cheap to reuse across many meshes). Blocks are kept lower than
+  // the characters so the (taller) characters clearly stand out above them.
+  private blockGeo = new THREE.BoxGeometry(TILE * 0.92, TILE * 0.78, TILE * 0.92);
   private bombGeo = new THREE.SphereGeometry(TILE * 0.32, 18, 14);
   private flameGeo = new THREE.BoxGeometry(TILE * 0.9, TILE * 0.55, TILE * 0.9);
   private bodyGeo = new THREE.CapsuleGeometry(TILE * 0.28, TILE * 0.32, 4, 10);
@@ -117,7 +120,7 @@ export class Renderer3D {
   private normalizeModel(model: THREE.Object3D): THREE.Object3D {
     const box = new THREE.Box3().setFromObject(model);
     const size = new THREE.Vector3(); box.getSize(size);
-    model.scale.setScalar((TILE * 0.92) / (size.y || 1));
+    model.scale.setScalar((TILE * 1.15) / (size.y || 1)); // taller than blocks → visible
     const box2 = new THREE.Box3().setFromObject(model);
     const ctr = new THREE.Vector3(); box2.getCenter(ctr);
     model.position.x -= ctr.x;
@@ -135,8 +138,8 @@ export class Renderer3D {
 
   private positionCamera(): void {
     // Angled top-down view that frames the whole board (tuned for ~13×11 tiles).
-    this.camera.position.set(0, 13.5, 11.5);
-    this.camera.lookAt(0, 0, -0.5);
+    this.camera.position.set(0, 12, 10);
+    this.camera.lookAt(0, 0, 0);
   }
 
   private setupLights(): void {
@@ -218,7 +221,7 @@ export class Renderer3D {
         if (existing && existing.type === tile) continue;
         if (existing) { this.root.remove(existing.mesh); this.blocks.delete(key); }
         const mesh = new THREE.Mesh(this.blockGeo, tile === "wall" ? this.wallMat : this.brickMat);
-        mesh.position.set(worldX(x), TILE * 0.05, worldZ(y));
+        mesh.position.set(worldX(x), BLOCK_Y, worldZ(y));
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         this.root.add(mesh);
@@ -242,7 +245,7 @@ export class Renderer3D {
         this.root.add(mesh);
         this.bombs.set(bomb.id, mesh);
       }
-      mesh.position.set(worldX(bomb.cell.x), TILE * 0.0, worldZ(bomb.cell.y));
+      mesh.position.set(worldX(bomb.cell.x), BOMB_Y, worldZ(bomb.cell.y));
       mesh.scale.setScalar(pulse);
     }
     for (const [id, mesh] of this.bombs) {

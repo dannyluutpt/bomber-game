@@ -462,44 +462,26 @@ h1 {
   text-align: center;
 }
 
+/* Avatars now show a render of the actual in-game 3D model (CC0, poly.pizza). */
 .sprite-avatar {
   position: relative;
   display: block;
-  width: 64px;
-  height: 64px;
+  width: 84px;
+  height: 84px;
   margin-bottom: 10px;
-  background-image: url("/assets/rpg_16x16.png");
+  border: 1px solid rgba(53, 217, 255, 0.35);
   background-repeat: no-repeat;
-  background-size: 1024px 512px;
-  image-rendering: pixelated;
-  box-shadow:
-    0 0 22px rgba(53, 217, 255, 0.38);
+  background-size: cover;
+  background-position: center 18%;
+  box-shadow: 0 0 22px rgba(53, 217, 255, 0.38);
 }
 
-/* Each character: x = col*64px, y = row*64px (spritesheet displayed at 4× zoom) */
-.sprite-nova {
-  background-position: -512px 0;    /* col 8, row 0 — blue officer */
-}
-
-.sprite-orion {
-  background-position: -768px -256px; /* col 12, row 4 — green warrior */
-}
-
-.sprite-titan {
-  background-position: 0 0;           /* col 0, row 0 — red fire */
-}
-
-.sprite-ghost {
-  background-position: -256px -256px; /* col 4, row 4 — purple mage */
-}
-
-.sprite-echo {
-  background-position: -768px 0;      /* col 12, row 0 — brown monk */
-}
-
-.sprite-viper {
-  background-position: -256px 0;      /* col 4, row 0 — gold warrior */
-}
+.sprite-nova  { background-image: url("/assets/avatars/nova.jpg"); }
+.sprite-orion { background-image: url("/assets/avatars/orion.jpg"); }
+.sprite-titan { background-image: url("/assets/avatars/titan.jpg"); }
+.sprite-ghost { background-image: url("/assets/avatars/ghost.jpg"); }
+.sprite-echo  { background-image: url("/assets/avatars/echo.jpg"); }
+.sprite-viper { background-image: url("/assets/avatars/viper.jpg"); }
 
 .room-code {
   margin: 22px 0 6px;
