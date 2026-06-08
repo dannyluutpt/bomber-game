@@ -1,21 +1,22 @@
 import type { MapThemeId } from "../simulation/types";
 
-// A MapTheme is purely cosmetic — it recolours the background, board and blocks.
-// It never touches the simulation, so the same gameplay runs under any theme.
+// A MapTheme is purely cosmetic — it recolours the background, board and blocks
+// and selects a biome drawing style. It never touches the simulation.
 export interface MapTheme {
   id: MapThemeId;
+  kind: "volcano" | "ice" | "jungle"; // biome motif drawn on blocks/floor
   name: string;
   blurb: string;
-  // Background (vertical gradient + nebula glow + stars)
+  // Background gradient + ambient specks + accent
   bgTop: number;
   bgBottom: number;
-  nebula: number;
-  star: number;
-  // Board floor
+  nebula: number;   // soft glow blob colour
+  star: number;     // ambient speck colour
+  // Board floor (checker of two tones + grid lines)
   floor: number;
   floorAlt: number;
   grid: number;
-  // Indestructible walls (3-face bevel: body / lit top / dark side)
+  // Indestructible walls (3-face look: body / lit top / dark side)
   wall: number;
   wallTop: number;
   wallSide: number;
@@ -23,39 +24,40 @@ export interface MapTheme {
   brick: number;
   brickTop: number;
   brickSide: number;
-  // Frame / glow accent
+  // Biome detail colour (lava cracks / ice shine / leaf highlight) + UI accent
+  detail: number;
   accent: number;
   accentSoft: number;
 }
 
 export const THEMES: Record<MapThemeId, MapTheme> = {
-  // Ref 1 — deep space, green-teal nebula, gold pipes, stone & crates.
-  space: {
-    id: "space", name: "Vũ trụ ống đồng", blurb: "Tinh vân xanh, trụ đá & thùng gỗ.",
-    bgTop: 0x081019, bgBottom: 0x0a2a24, nebula: 0x1f7d5f, star: 0xbfe9ff,
-    floor: 0x223247, floorAlt: 0x1b2a3c, grid: 0x2f4a63,
-    wall: 0x6f7f93, wallTop: 0xd5e3f3, wallSide: 0x394658,
-    brick: 0xb86a32, brickTop: 0xf0a35d, brickSide: 0x7a3f1c,
-    accent: 0xffa53b, accentSoft: 0x35d9ff
+  // 🌋 Volcano — black basalt, obsidian walls, cracked rock glowing with magma.
+  volcano: {
+    id: "volcano", kind: "volcano", name: "Núi lửa", blurb: "Đá đen, dung nham nứt cháy đỏ.",
+    bgTop: 0x1a0805, bgBottom: 0x40100a, nebula: 0xb83410, star: 0xffb066,
+    floor: 0x2a1410, floorAlt: 0x21100c, grid: 0x4a2418,
+    wall: 0x3a2a2a, wallTop: 0x5e4742, wallSide: 0x201414,
+    brick: 0x5a2a1c, brickTop: 0x8a4326, brickSide: 0x331208,
+    detail: 0xff7311, accent: 0xff5a1e, accentSoft: 0xffc24d
   },
-  // Ref 2 — purple/magenta nebula, icy white-blue blocks, crystal vibe.
+  // ❄️ Ice — frozen tundra, glassy ice walls, packed-snow crates with a cool shine.
   ice: {
-    id: "ice", name: "Băng pha lê", blurb: "Tinh vân tím, khối băng trắng xanh.",
-    bgTop: 0x1a1030, bgBottom: 0x3a1440, nebula: 0x8a48c0, star: 0xeaf2ff,
-    floor: 0x2c4a66, floorAlt: 0x254059, grid: 0x436a8f,
-    wall: 0x9fc4e8, wallTop: 0xeaf6ff, wallSide: 0x5a86ad,
-    brick: 0x66b8e0, brickTop: 0xbdeaff, brickSide: 0x2f6f9a,
-    accent: 0x4fd6ff, accentSoft: 0xb98bff
+    id: "ice", kind: "ice", name: "Băng tuyết", blurb: "Băng pha lê, tuyết phủ lạnh giá.",
+    bgTop: 0x0a1b33, bgBottom: 0x123a5c, nebula: 0x4aa3d6, star: 0xeaf6ff,
+    floor: 0x3a5b78, floorAlt: 0x32526d, grid: 0x6a93b4,
+    wall: 0x9fd0ec, wallTop: 0xeafaff, wallSide: 0x5d8fb4,
+    brick: 0xbfe6f5, brickTop: 0xeefbff, brickSide: 0x77abca,
+    detail: 0xffffff, accent: 0x5fd6ff, accentSoft: 0xbfeaff
   },
-  // Ref 3 — dark red/maroon, navy metal blocks, orange hazard energy.
-  industrial: {
-    id: "industrial", name: "Công nghiệp dung nham", blurb: "Nền đỏ, kim loại & năng lượng cam.",
-    bgTop: 0x2a0a12, bgBottom: 0x4a0e16, nebula: 0x9c2436, star: 0xffd9c2,
-    floor: 0x1e2730, floorAlt: 0x17202a, grid: 0x394655,
-    wall: 0x4a5a72, wallTop: 0x90a9c9, wallSide: 0x29344a,
-    brick: 0x33425d, brickTop: 0x5d76a0, brickSide: 0x1a2436,
-    accent: 0xff5a2a, accentSoft: 0xffc24d
+  // 🌴 Jungle — lush grass, mossy stone walls, wooden/leafy breakable crates.
+  jungle: {
+    id: "jungle", kind: "jungle", name: "Rừng rậm", blurb: "Cỏ xanh, đá rêu & gỗ mục.",
+    bgTop: 0x0a1e10, bgBottom: 0x123d1c, nebula: 0x3fae57, star: 0xd6ff9e,
+    floor: 0x2f6a35, floorAlt: 0x28602e, grid: 0x47853f,
+    wall: 0x6b7a55, wallTop: 0x9fb074, wallSide: 0x3f4a30,
+    brick: 0x8a5a30, brickTop: 0xb98049, brickSide: 0x583718,
+    detail: 0x8fd14a, accent: 0x7ed957, accentSoft: 0xd6ff9e
   }
 };
 
-export const THEME_LIST: MapTheme[] = [THEMES.space, THEMES.ice, THEMES.industrial];
+export const THEME_LIST: MapTheme[] = [THEMES.volcano, THEMES.ice, THEMES.jungle];

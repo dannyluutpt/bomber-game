@@ -57,7 +57,7 @@ export class GameScene extends Phaser.Scene {
   private selectedDifficulty: DifficultyId = "normal";
   private selectedCharacters: [CharacterId, CharacterId] = ["nova", "orion"];
   private selectedMode: GameMode = "single";
-  private selectedTheme: MapThemeId = "space";
+  private selectedTheme: MapThemeId = "volcano";
   private lastSeed = 0;
   private hudOffset = 88;
   private touchBottom = 0;
@@ -656,46 +656,86 @@ export class GameScene extends Phaser.Scene {
         g.strokeRect(px, py, t, t);
         const tile = snapshot.tiles[y][x];
         if (tile === "wall") {
-          this.drawBlock(g, px, py, t, th.wall, th.wallTop, th.wallSide);
+          this.drawBlock(g, px, py, t, false);
         } else if (tile === "brick") {
-          this.drawBlock(g, px, py, t, th.brick, th.brickTop, th.brickSide);
+          this.drawBlock(g, px, py, t, true);
         } else if (tile === "exit") {
           g.fillStyle(th.accent, 0.22); g.fillRect(px + 5, py + 5, t - 10, t - 10);
           g.lineStyle(3, th.accent, 1); g.strokeRect(px + 9, py + 9, t - 18, t - 18);
+        } else {
+          this.drawFloorMotif(g, px, py, t, x, y);
         }
       }
     }
   }
 
-  // A faux-3D block: drop shadow + a darker "side" revealed at the bottom to fake
-  // height, a base body, a lit top strip and a left-edge bevel. Cheap but reads as 3D.
-  private drawBlock(
-    g: Phaser.GameObjects.Graphics,
-    px: number, py: number, t: number,
-    base: number, top: number, side: number
-  ): void {
+  // Sparse, deterministic biome flecks on empty floor (embers / frost / leaves).
+  private drawFloorMotif(g: Phaser.GameObjects.Graphics, px: number, py: number, t: number, x: number, y: number): void {
+    const h = ((x * 73856093) ^ (y * 19349663)) >>> 0;
+    if ((h & 7) !== 0) return; // ~1 in 8 cells
+    const cx = px + t * (0.25 + ((h >> 3) & 3) * 0.16);
+    const cy = py + t * (0.25 + ((h >> 5) & 3) * 0.16);
+    const r = Math.max(1, t * 0.035);
+    const th = this.theme;
+    if (th.kind === "ice") { g.fillStyle(0xffffff, 0.22); g.fillRect(cx, cy, r * 1.6, 1); }
+    else { g.fillStyle(th.detail, th.kind === "volcano" ? 0.5 : 0.4); g.fillCircle(cx, cy, r); }
+  }
+
+  // A faux-3D block (shadow + side + body + lit top + bevel) with a biome motif
+  // drawn on its face: lava cracks (volcano), an icy shine (ice), wood/moss (jungle).
+  private drawBlock(g: Phaser.GameObjects.Graphics, px: number, py: number, t: number, isBrick: boolean): void {
+    const th = this.theme;
+    const base = isBrick ? th.brick : th.wall;
+    const top = isBrick ? th.brickTop : th.wallTop;
+    const side = isBrick ? th.brickSide : th.wallSide;
     const inset = Math.max(2, Math.floor(t * 0.09));
     const w = t - inset * 2;
     const lift = Math.max(2, Math.floor(t * 0.16)); // apparent block height
     const bx = px + inset;
     const by = py + inset;
+    const fh = w - lift; // visible body-face height
 
-    // contact shadow on the floor
     g.fillStyle(0x000000, 0.3);
     g.fillEllipse(px + t / 2, py + t - inset * 0.5, w * 0.96, Math.max(3, inset * 1.5));
-    // dark lower face (the "side")
     g.fillStyle(side, 1);
     g.fillRect(bx, by, w, w);
-    // base body, shorter so the bottom `lift` band shows the side colour
     g.fillStyle(base, 1);
-    g.fillRect(bx, by, w, w - lift);
-    // lit top strip
+    g.fillRect(bx, by, w, fh);
     g.fillStyle(top, 1);
-    g.fillRect(bx + Math.floor(w * 0.12), by + Math.floor(w * 0.1),
-      Math.floor(w * 0.76), Math.max(3, Math.floor(t * 0.13)));
-    // left-edge bevel highlight
+    g.fillRect(bx + Math.floor(w * 0.12), by + Math.floor(w * 0.1), Math.floor(w * 0.76), Math.max(3, Math.floor(t * 0.13)));
     g.fillStyle(top, 0.3);
-    g.fillRect(bx, by, Math.max(2, Math.floor(t * 0.06)), w - lift);
+    g.fillRect(bx, by, Math.max(2, Math.floor(t * 0.06)), fh);
+
+    this.drawBlockMotif(g, bx, by, w, fh, t, isBrick);
+  }
+
+  private drawBlockMotif(g: Phaser.GameObjects.Graphics, bx: number, by: number, w: number, fh: number, t: number, isBrick: boolean): void {
+    const th = this.theme;
+    if (th.kind === "volcano") {
+      if (!isBrick) return; // only breakable rock glows with magma
+      g.lineStyle(Math.max(1, t * 0.05), th.detail, 0.95);
+      g.beginPath();
+      g.moveTo(bx + w * 0.28, by + fh * 0.15);
+      g.lineTo(bx + w * 0.46, by + fh * 0.45);
+      g.lineTo(bx + w * 0.34, by + fh * 0.68);
+      g.lineTo(bx + w * 0.55, by + fh * 0.95);
+      g.strokePath();
+      g.fillStyle(th.detail, 0.9);
+      g.fillCircle(bx + w * 0.72, by + fh * 0.4, Math.max(1, t * 0.05));
+    } else if (th.kind === "ice") {
+      g.fillStyle(0xffffff, isBrick ? 0.55 : 0.4); // diagonal shine streak
+      g.fillRect(bx + w * 0.16, by + fh * 0.12, Math.max(2, Math.floor(t * 0.08)), Math.max(2, fh * 0.55));
+    } else { // jungle
+      if (isBrick) { // wood-grain lines on the crate
+        g.lineStyle(Math.max(1, Math.floor(t * 0.03)), th.brickSide, 0.7);
+        g.lineBetween(bx + w * 0.2, by + fh * 0.38, bx + w * 0.8, by + fh * 0.38);
+        g.lineBetween(bx + w * 0.2, by + fh * 0.66, bx + w * 0.8, by + fh * 0.66);
+      } else { // moss tufts on stone
+        g.fillStyle(th.detail, 0.75);
+        g.fillCircle(bx + w * 0.3, by + fh * 0.32, Math.max(1, t * 0.06));
+        g.fillCircle(bx + w * 0.62, by + fh * 0.6, Math.max(1, t * 0.05));
+      }
+    }
   }
 
   private drawPowerUps(snapshot: GameSnapshot, t: number): void {
