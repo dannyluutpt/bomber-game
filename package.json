@@ -10,10 +10,8 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
-    "@types/three": "^0.184.1",
     "peerjs": "^1.5.5",
-    "phaser": "^3.90.0",
-    "three": "^0.184.0"
+    "phaser": "^3.90.0"
   },
   "devDependencies": {
     "@vitejs/plugin-legacy": "^6.0.0",
