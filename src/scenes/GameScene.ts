@@ -52,6 +52,7 @@ export class GameScene extends Phaser.Scene {
   private playerSprites: Phaser.GameObjects.Sprite[] = [];
   private playerLabels: Phaser.GameObjects.Text[] = [];
   private enemySprites: Phaser.GameObjects.Sprite[] = [];
+  private gemImages: Phaser.GameObjects.Image[] = [];
   private lastBrickCount = -1;
   private activeTouchDirection: Direction | null = null;
   private selectedDifficulty: DifficultyId = "normal";
@@ -156,6 +157,9 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet("rpgCharacters", `${import.meta.env.BASE_URL}assets/rpg_16x16.png`, {
       frameWidth: 16, frameHeight: 16
     });
+    this.load.spritesheet("kenney1bit", `${import.meta.env.BASE_URL}assets/kenney_1bit_colored.png`, {
+      frameWidth: 16, frameHeight: 16, spacing: 1
+    });
   }
 
   create(): void {
@@ -168,10 +172,17 @@ export class GameScene extends Phaser.Scene {
     this.createChrome();
 
     // --- persistent render pool: created once, reused every frame ---
-    // Layer order in container: tiles (bottom) → dynamic vector → enemy sprites → player sprites → labels (top)
+    // Layer order: tiles → gem icons → dynamic vector (bombs/explosions) → enemies → players → labels
     this.gTiles = this.add.graphics();
     this.board.add(this.gTiles);
-    this.gDynamic = this.add.graphics();  // shadows + shields + items + bombs + explosions
+
+    // Gem sprite pool — sits above tiles but below explosions
+    for (let i = 0; i < 16; i++) {
+      const img = this.add.image(0, 0, "kenney1bit", 529);
+      img.setVisible(false); this.board.add(img); this.gemImages.push(img);
+    }
+
+    this.gDynamic = this.add.graphics();  // power-ups + bombs + explosions + shields
     this.board.add(this.gDynamic);
 
     const ENEMY_MAX = 4;
@@ -770,15 +781,23 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawGems(snapshot: GameSnapshot, t: number): void {
-    const g = this.gDynamic;
-    const r = Math.floor(t * 0.28);
+    // Frame indices in kenney_1bit_colored.png (49 cols/row, spacing=1):
+    // row*49+col — extraLife(10,39)=529, phaseWalk(10,33)=523, megaBlast(10,15)=505,
+    //              speedSurge(10,32)=522, shield(4,37)=233
+    const FRAMES: Record<BuffType, number> = {
+      extraLife: 529, phaseWalk: 523, megaBlast: 505, speedSurge: 522, shield: 233
+    };
+    const scale = t / 16;
+    let slot = 0;
     for (const gem of snapshot.gems) {
       if (snapshot.tiles[gem.cell.y][gem.cell.x] !== "floor") continue;
+      if (slot >= this.gemImages.length) break;
       const c = this.cellCenter(gem.cell, t);
-      g.fillStyle(this.gemColor(gem.type), 0.9);
-      g.fillTriangle(c.x, c.y - r, c.x - r, c.y + r, c.x + r, c.y + r);
-      g.lineStyle(2, 0xffffff, 0.7);
-      g.strokeTriangle(c.x, c.y - r, c.x - r, c.y + r, c.x + r, c.y + r);
+      this.gemImages[slot].setVisible(true).setPosition(c.x, c.y).setFrame(FRAMES[gem.type]).setScale(scale);
+      slot++;
+    }
+    for (; slot < this.gemImages.length; slot++) {
+      this.gemImages[slot].setVisible(false);
     }
   }
 
