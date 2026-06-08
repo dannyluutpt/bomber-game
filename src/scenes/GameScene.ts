@@ -270,7 +270,29 @@ export class GameScene extends Phaser.Scene {
 
   private bindMenu(): void {
     this.hud.playNow?.addEventListener("click", () => this.showScreen("mode"));
-    this.hud.guide?.addEventListener("click", () => this.showScreen("guide"));
+
+    // Guide: 2-page pagination
+    const guideP1     = document.getElementById("guide-p1");
+    const guideP2     = document.getElementById("guide-p2");
+    const guideNext   = document.getElementById("guide-next-btn") as HTMLButtonElement | null;
+    const guidePrev   = document.getElementById("guide-prev-btn") as HTMLButtonElement | null;
+    const guidePager  = document.getElementById("guide-pager");
+    const resetGuide  = (): void => {
+      guideP1?.classList.remove("hidden");
+      guideP2?.classList.add("hidden");
+      if (guidePrev)  guidePrev.style.display  = "none";
+      if (guideNext)  guideNext.style.display   = "";
+      if (guidePager) guidePager.textContent    = "1 / 2";
+    };
+    guideNext?.addEventListener("click", () => {
+      guideP1?.classList.add("hidden");
+      guideP2?.classList.remove("hidden");
+      if (guidePrev)  guidePrev.style.display  = "";
+      if (guideNext)  guideNext.style.display   = "none";
+      if (guidePager) guidePager.textContent    = "2 / 2";
+    });
+    guidePrev?.addEventListener("click", () => resetGuide());
+    this.hud.guide?.addEventListener("click", () => { resetGuide(); this.showScreen("guide"); });
     this.hud.resume?.addEventListener("click", () => this.resumeGame());
     this.hud.restart?.addEventListener("click", () => this.restartGame());
     this.hud.mainMenu?.addEventListener("click", () => this.returnToMainMenu());

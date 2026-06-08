@@ -48,6 +48,16 @@
       .buff-table td:first-child { text-align: center; width: 38px; padding: 3px 0; }
       .buff-name { font-weight: bold; color: #e8e8ff; display: block; }
       .buff-desc { color: #b0b8cc; font-size: 11px; }
+
+      /* ── Guide pagination ────────────────────────────── */
+      .guide-pager {
+        font-size: 10px;
+        letter-spacing: 2px;
+        color: #35d9ff;
+        opacity: 0.65;
+        margin-left: 10px;
+        vertical-align: middle;
+      }
     </style>
   </head>
   <body>
@@ -138,11 +148,18 @@
         <!-- GUIDE -->
         <section class="menu-shell hidden" data-screen="guide">
           <main class="menu-main">
-            <p class="eyebrow">HƯỚNG DẪN</p>
+            <p class="eyebrow">HƯỚNG DẪN <span id="guide-pager" class="guide-pager">1 / 2</span></p>
             <h1>Luật chơi</h1>
-            <div class="guide-grid">
+
+            <!-- Trang 1: Điều khiển -->
+            <div id="guide-p1" class="guide-grid">
               <div><strong>1 người:</strong> Phím mũi tên để di chuyển, Space đặt bom. Diệt quái, mở cổng thoát, bước vào để thắng.</div>
               <div><strong>2 người (online):</strong> Một người tạo mã phòng 6 số, gửi mã cho bạn. Người kia nhập mã để vào. Mỗi người dùng phím mũi tên + Space/Enter trên máy mình. Người sống cuối cùng thắng.</div>
+              <div style="grid-column: 1 / -1"><strong>Dây chuyền:</strong> Bom kích nổ bom khác — trừ bom của Viper.</div>
+            </div>
+
+            <!-- Trang 2: Gem buff -->
+            <div id="guide-p2" class="guide-grid hidden">
               <div style="grid-column: 1 / -1">
                 <div style="margin-bottom:4px"><strong>Gem buff</strong> — nhặt khi gạch mềm bị phá vỡ:</div>
                 <table class="buff-table">
@@ -178,10 +195,12 @@
                   </tbody>
                 </table>
               </div>
-              <div><strong>Dây chuyền:</strong> Bom kích nổ bom khác — trừ bom của Viper.</div>
             </div>
+
             <div class="actions">
-              <button class="back-main-button" type="button">Quay lại</button>
+              <button id="guide-prev-btn" class="secondary" type="button" style="display:none">← Trước</button>
+              <button id="guide-next-btn" type="button">Tiếp theo →</button>
+              <button class="back-main-button secondary" type="button">Quay lại</button>
             </div>
           </main>
         </section>
